@@ -1633,7 +1633,6 @@ function AboutModal({ onClose }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-sm">
               <FeatureItem emoji="📍" text="Automatska detekcija polazne lokacije" color="sky" />
               <FeatureItem emoji="✈️" text="Prevoz: avion, auto, autobus, voz" color="sky" />
-              <FeatureItem emoji="📅" text="Alternativni datumi +/-3 dana za lete" color="sky" />
               <FeatureItem emoji="🏠" text="Smjestaj blizu atrakcija + tipicne cijene" color="sky" />
               <FeatureItem emoji="🎯" text="15 must-see atrakcija sa cijenama" color="emerald" />
               <FeatureItem emoji="📆" text="Dan-po-dan itinerarij" color="emerald" />
