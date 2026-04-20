@@ -2383,28 +2383,33 @@ function AboutModal({ onClose }) {
 
           {/* Opis */}
           <p className="text-white/80 text-sm leading-relaxed">
-            <span className="font-semibold text-white">Putni Planer</span> generiše kompletan plan putovanja u jednom kliku — prevoz, smjestaj, atrakcije, itinerarij, mapa, viza, hitni kontakti i budzet, sve iz javno dostupnih live izvora. Nista se ne izmislja — ako podatak nije dostupan, aplikacija to kaze.
+            <span className="font-semibold text-white">Putni Planer</span> generiše kompletan plan putovanja u jednom kliku — prevoz, smještaj, muzeje i atrakcije, itinerarij, mapa, viza, valuta, zamke za turiste i budžet, sve iz javno dostupnih live izvora. Ništa se ne izmišlja — ako podatak nije dostupan, aplikacija to kaže.
           </p>
 
           {/* Funkcionalnosti */}
           <div>
             <h3 className="text-accent-400 font-semibold text-sm uppercase tracking-wide mb-3">Funkcionalnosti</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-sm">
-              <FeatureItem emoji="📍" text="Automatska detekcija polazne lokacije" color="sky" />
+              <FeatureItem emoji="📍" text="GPS detekcija polazne lokacije" color="sky" />
+              <FeatureItem emoji="🌍" text="Gdje da idem? — AI + live cijene letova" color="sky" />
               <FeatureItem emoji="✈️" text="Prevoz: avion, auto, autobus, voz" color="sky" />
-              <FeatureItem emoji="🏠" text="Smjestaj blizu atrakcija + tipicne cijene" color="sky" />
-              <FeatureItem emoji="🎯" text="15 must-see atrakcija sa cijenama" color="emerald" />
+              <FeatureItem emoji="🔗" text="Dijeli plan — link s popunjenom formom" color="sky" />
+              <FeatureItem emoji="🏙️" text="Info o gradu: demografija, kriminal, religija" color="emerald" />
+              <FeatureItem emoji="🗓️" text="Državni praznici tokom boravka" color="emerald" />
+              <FeatureItem emoji="🏛️" text="12 muzeja i atrakcija s opisima (AI kurirana)" color="emerald" />
               <FeatureItem emoji="📆" text="Dan-po-dan itinerarij" color="emerald" />
               <FeatureItem emoji="🗺️" text="Interaktivna mapa (OpenStreetMap)" color="emerald" />
-              <FeatureItem emoji="🚆" text="Javni prevoz: cijene karata + tourist pass" color="emerald" />
-              <FeatureItem emoji="🌤️" text="Vremenska prognoza + preporuka garderobe" color="amber" />
-              <FeatureItem emoji="🍴" text="Lokalna hrana u blizini smjestaja" color="amber" />
-              <FeatureItem emoji="🌍" text="Globalni lanci (McDonald's, KFC, Starbucks...)" color="amber" />
-              <FeatureItem emoji="🛂" text="Viza za BiH pasos — real-time provjera" color="amber" />
+              <FeatureItem emoji="🏠" text="Smještaj u blizini + tipične cijene" color="amber" />
+              <FeatureItem emoji="🚆" text="Javni prevoz: cijene karata + tourist pass" color="amber" />
+              <FeatureItem emoji="🌤️" text="Vremenska prognoza + odjeća" color="amber" />
+              <FeatureItem emoji="🍴" text="Hrana i lanci (McDonald's, KFC...) u blizini" color="amber" />
+              <FeatureItem emoji="⚠️" text="Zamke za turiste — konkretne prevare" color="red" />
+              <FeatureItem emoji="💱" text="Valuta: kurs EUR + tipične cijene" color="red" />
+              <FeatureItem emoji="🛂" text="Viza za BiH pasoš — provjera" color="red" />
               <FeatureItem emoji="🚨" text="Hitni brojevi + ambasada BiH" color="red" />
-              <FeatureItem emoji="💰" text="Budzet: live + procjene sa legendom" color="red" />
-              <FeatureItem emoji="☀️" text="Light/Dark tema" color="red" />
-              <FeatureItem emoji="📄" text="Export cijelog plana u PDF" color="red" />
+              <FeatureItem emoji="💰" text="Okvirni budžet: live + procjene" color="red" />
+              <FeatureItem emoji="☀️" text="Light/Dark tema" color="sky" />
+              <FeatureItem emoji="📄" text="Export plana u PDF (print)" color="sky" />
             </div>
           </div>
 
@@ -2413,13 +2418,13 @@ function AboutModal({ onClose }) {
             <h3 className="text-accent-400 font-semibold text-sm uppercase tracking-wide mb-3">Kako radi</h3>
             <ol className="space-y-2 text-sm text-white/75">
               {[
-                'Unesi polazak (ili dozvoli auto-detekciju), destinaciju, datume, putnike i prevoz',
-                'Backend geocodira lokacije i paralelno poziva sve izvore podataka',
-                'Groq AI (Llama 3.3 70B) generise cijene atrakcija, karata i smjestaja za BILO KOJI grad na svijetu',
-                'Letovi: Google Flights, Kiwi, Kayak i Momondo linkovi su automatski predpopunjeni',
-                'OpenStreetMap/Overpass povlaci tacke interesa, restorane i javni prevoz',
-                'Open-Meteo daje vremensku prognozu za period putovanja',
-                'Ako za neku kategoriju nema slobodnog live izvora — aplikacija to kaze, ne izmislja',
+                'Unesi polazak (GPS ili ručno), destinaciju, datume, putnike i prevoz — ili klikni "Gdje da idem?" za AI preporuke s live cijenama letova (Travelpayouts)',
+                'Backend geocodira lokacije i paralelno poziva 10+ API izvora odjednom',
+                'Groq AI (Llama 3.3 70B) generiše: muzeje s opisima, zamke za turiste, valutu, info o gradu i viza status za BiH pasoš',
+                'OpenStreetMap / Overpass povlači tačke interesa, restorane, smještaj i javni prevoz',
+                'Open-Meteo ili OpenWeatherMap daje vremensku prognozu za period boravka',
+                'date.nager.at provjerava državne praznike u destinaciji za tvoje datume',
+                'Sve se spaja u jedan kompletan plan — ako neka kategorija nema live podataka, jasno je označena a ne izmišljena',
               ].map((step, i) => (
                 <li key={i} className="flex gap-3">
                   <span className="flex-shrink-0 w-5 h-5 rounded-full bg-accent-500/30 border border-accent-500/50 text-accent-400 text-xs font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
@@ -2434,10 +2439,12 @@ function AboutModal({ onClose }) {
             <h3 className="text-accent-400 font-semibold text-sm uppercase tracking-wide mb-3">Tehnologije i izvori</h3>
             <div className="flex flex-wrap gap-1.5 text-xs">
               {[
-                'React + Vite', 'Tailwind CSS', 'Cloudflare Pages',
-                'Groq AI (Llama 3.3 70B)', 'OpenStreetMap / Overpass',
-                'Open-Meteo', 'OSRM routing', 'RestCountries API',
-                'Amadeus (opciono)', 'Leaflet mapa',
+                'React + Vite', 'Tailwind CSS', 'Cloudflare Pages Functions',
+                'Groq AI — Llama 3.3 70B', 'OpenStreetMap / Overpass',
+                'Travelpayouts (live letovi)', 'Open-Meteo + OpenWeatherMap',
+                'OSRM (auto ruting)', 'RestCountries API',
+                'date.nager.at (praznici)', 'Leaflet.js (mapa)',
+                'Amadeus (opciono)',
               ].map(tech => (
                 <span key={tech} className="bg-white/8 border border-white/10 text-white/70 px-2.5 py-1 rounded-full">{tech}</span>
               ))}
@@ -2448,14 +2455,14 @@ function AboutModal({ onClose }) {
           <div className="bg-ink-900/50 rounded-xl p-4 border border-white/5 text-sm">
             <div className="text-white/50 text-xs uppercase tracking-wide mb-1.5">Privatnost</div>
             <p className="text-white/65 leading-relaxed">
-              Aplikacija ne cuva tvoje podatke na serveru. Lokacija se koristi samo lokalno u browseru (sprema se u localStorage). Upiti se salju samo javnim servisima potrebnim za geokodiranje, rute i lokacije.
+              Aplikacija ne čuva tvoje podatke na serveru. Lokacija se koristi samo lokalno u browseru (sprema se u localStorage). Upiti se šalju samo javnim servisima potrebnim za geokodiranje, rute i lokacije.
             </p>
           </div>
         </div>
 
         {/* Footer */}
         <div className="sticky bottom-0 bg-ink-800 border-t border-white/10 px-6 py-3 flex items-center justify-between">
-          <span className="text-white/30 text-xs">v2.0 • 2025/26 Alan Catovic</span>
+          <span className="text-white/30 text-xs">v3.0 • 2025/26 Alan Catovic</span>
           <button onClick={onClose} className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">Zatvori</button>
         </div>
       </div>
