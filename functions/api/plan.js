@@ -407,7 +407,7 @@ export async function onRequestGet(context) {
       anthropic: !!(env.ANTHROPIC_API_KEY),
       groq: !!(env.GROQ_API_KEY),
       sherpa: true,
-      openMeteo: true,
+      openWeather: !!(env.OPENWEATHER_API_KEY),
       openStreetMap: true,
       osrm: true,
     },
@@ -472,7 +472,7 @@ async function mainLogic(context) {
   const countryInfo = await fetchCountryInfo(destinationGeo.countryCode, destinationGeo.country)
 
   const [weather, attractions, transit, countryEmergency, cityKnowledge] = await Promise.all([
-    fetchWeather(destinationGeo, departDate, returnDate),
+    fetchWeather(destinationGeo, departDate, returnDate, env),
     fetchAttractions(destinationGeo),
     fetchTransit(destinationGeo),
     buildEmergencyInfo(countryInfo),
@@ -870,11 +870,138 @@ out center tags 20;
   }
 }
 
-async function fetchWeather(destinationGeo, departDate, returnDate) {
+async function fetchWeather(destinationGeo, departDate, returnDate, env) {
+  const owKey = env?.OPENWEATHER_API_KEY
+
+  if (owKey) {
+    try {
+      const result = await fetchWeatherOpenWeather(destinationGeo, departDate, returnDate, owKey)
+      if (result) return result
+    } catch (err) {
+      console.error('OpenWeather error:', err?.message)
+    }
+  }
+
+  // Fallback: Open-Meteo (besplatno, bez kljuca)
+  return fetchWeatherOpenMeteo(destinationGeo, departDate, returnDate)
+}
+
+async function fetchWeatherOpenWeather(destinationGeo, departDate, returnDate, apiKey) {
+  // One Call API 3.0 - daje daily forecast do 8 dana unaprijed
+  const url = `https://api.openweathermap.org/data/3.0/onecall?lat=${destinationGeo.lat}&lon=${destinationGeo.lng}&appid=${apiKey}&units=metric&exclude=minutely,current,alerts&lang=hr`
+  const resp = await fetch(url)
+  if (!resp.ok) {
+    // Pokusaj stariji 2.5 endpoint
+    return fetchWeatherOpenWeather25(destinationGeo, departDate, returnDate, apiKey)
+  }
+  const data = await resp.json()
+  const daily = data?.daily
+  if (!daily?.length) return null
+
+  const start = new Date(departDate + 'T00:00:00Z')
+  const end   = new Date(returnDate + 'T00:00:00Z')
+
+  // Filtriraj samo dane koji su u periodu putovanja
+  const tripDays = daily.filter(d => {
+    const date = new Date(d.dt * 1000)
+    return date >= start && date <= end
+  })
+
+  if (!tripDays.length) {
+    // Ako nisu u rasponu, uzmi prvih 7 od forecast-a
+    tripDays.push(...daily.slice(0, 7))
+  }
+
+  const mins = tripDays.map(d => d.temp.min)
+  const maxs = tripDays.map(d => d.temp.max)
+  const rains = tripDays.map(d => Math.round((d.pop || 0) * 100))
+  const minTemp = Math.round(Math.min(...mins))
+  const maxTemp = Math.round(Math.max(...maxs))
+  const rainMax = Math.max(...rains)
+
+  // Dnevni pregled
+  const dayForecast = tripDays.slice(0, 10).map(d => {
+    const date = new Date(d.dt * 1000)
+    const dateStr = date.toISOString().slice(0, 10)
+    return {
+      date: dateStr,
+      min_c: Math.round(d.temp.min),
+      max_c: Math.round(d.temp.max),
+      rain_pct: Math.round((d.pop || 0) * 100),
+      description: d.weather?.[0]?.description || '',
+      icon: d.weather?.[0]?.icon || '',
+      humidity: d.humidity,
+      wind_ms: Math.round(d.wind_speed || 0),
+      uvi: Math.round(d.uvi || 0),
+    }
+  })
+
+  return {
+    forecast_summary: `OpenWeatherMap prognoza za ${tripDays.length} ${tripDays.length === 1 ? 'dan' : 'dana'} putovanja.`,
+    min_temp_c: minTemp,
+    max_temp_c: maxTemp,
+    rain_probability: rainMax > 60 ? `Visoka (~${rainMax}%)` : rainMax > 25 ? `Umjerena (~${rainMax}%)` : `Niska (~${rainMax}%)`,
+    clothing_recommendation: inferClothingRecommendation(minTemp, maxTemp, rainMax),
+    daily_forecast: dayForecast,
+    source: 'OpenWeatherMap',
+  }
+}
+
+async function fetchWeatherOpenWeather25(destinationGeo, departDate, returnDate, apiKey) {
+  // Free 2.5 endpoint - 5-day/3h forecast, agregiramo po danu
+  const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${destinationGeo.lat}&lon=${destinationGeo.lng}&appid=${apiKey}&units=metric&lang=hr&cnt=40`
+  const resp = await fetch(url)
+  if (!resp.ok) return null
+  const data = await resp.json()
+  const list = data?.list
+  if (!list?.length) return null
+
+  // Grupisaj po datumu
+  const byDay = {}
+  for (const entry of list) {
+    const d = entry.dt_txt?.slice(0, 10)
+    if (!d) continue
+    if (!byDay[d]) byDay[d] = []
+    byDay[d].push(entry)
+  }
+
+  const dayForecast = Object.entries(byDay).slice(0, 5).map(([date, entries]) => {
+    const mins = entries.map(e => e.main.temp_min)
+    const maxs = entries.map(e => e.main.temp_max)
+    const rains = entries.map(e => Math.round((e.pop || 0) * 100))
+    return {
+      date,
+      min_c: Math.round(Math.min(...mins)),
+      max_c: Math.round(Math.max(...maxs)),
+      rain_pct: Math.max(...rains),
+      description: entries[4]?.weather?.[0]?.description || entries[0]?.weather?.[0]?.description || '',
+      icon: entries[4]?.weather?.[0]?.icon || entries[0]?.weather?.[0]?.icon || '',
+      humidity: entries[4]?.main?.humidity || 0,
+      wind_ms: Math.round(entries[4]?.wind?.speed || 0),
+      uvi: 0,
+    }
+  })
+
+  if (!dayForecast.length) return null
+  const allMins = dayForecast.map(d => d.min_c)
+  const allMaxs = dayForecast.map(d => d.max_c)
+  const rainMax = Math.max(...dayForecast.map(d => d.rain_pct))
+
+  return {
+    forecast_summary: `OpenWeatherMap prognoza za sljedecih ${dayForecast.length} dana.`,
+    min_temp_c: Math.round(Math.min(...allMins)),
+    max_temp_c: Math.round(Math.max(...allMaxs)),
+    rain_probability: rainMax > 60 ? `Visoka (~${rainMax}%)` : rainMax > 25 ? `Umjerena (~${rainMax}%)` : `Niska (~${rainMax}%)`,
+    clothing_recommendation: inferClothingRecommendation(Math.min(...allMins), Math.max(...allMaxs), rainMax),
+    daily_forecast: dayForecast,
+    source: 'OpenWeatherMap',
+  }
+}
+
+async function fetchWeatherOpenMeteo(destinationGeo, departDate, returnDate) {
   const url = `${OPEN_METEO_FORECAST_URL}?latitude=${destinationGeo.lat}&longitude=${destinationGeo.lng}&timezone=auto&start_date=${departDate}&end_date=${returnDate}&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode`
   const response = await fetch(url)
   if (!response.ok) return null
-
   const data = await response.json()
   const daily = data?.daily
   if (!daily?.time?.length) return null
@@ -884,12 +1011,25 @@ async function fetchWeather(destinationGeo, departDate, returnDate) {
   const rainMax = Math.max(...daily.precipitation_probability_max)
   const codes = dedupeStrings(daily.weathercode.map(describeWeatherCode).filter(Boolean))
 
+  const dayForecast = daily.time.map((date, i) => ({
+    date,
+    min_c: Math.round(daily.temperature_2m_min[i]),
+    max_c: Math.round(daily.temperature_2m_max[i]),
+    rain_pct: daily.precipitation_probability_max[i] || 0,
+    description: describeWeatherCode(daily.weathercode[i]) || '',
+    icon: '',
+    humidity: 0,
+    wind_ms: 0,
+    uvi: 0,
+  }))
+
   return {
     forecast_summary: `Prognoza: ${codes.slice(0, 3).join(', ')}.`,
     min_temp_c: min,
     max_temp_c: max,
     rain_probability: rainMax > 60 ? `Visoka (~${rainMax}%)` : rainMax > 25 ? `Umjerena (~${rainMax}%)` : `Niska (~${rainMax}%)`,
     clothing_recommendation: inferClothingRecommendation(min, max, rainMax),
+    daily_forecast: dayForecast,
     source: 'Open-Meteo',
   }
 }

@@ -116,6 +116,31 @@ body.light .bg-emerald-500\/10 { background-color: rgba(16,185,129,0.08) !import
 body.light .bg-amber-500\/10 { background-color: rgba(245,158,11,0.08) !important; }
 body.light .bg-amber-500\/5  { background-color: rgba(245,158,11,0.05) !important; }
 
+/* Modal background (bg-ink-800 without opacity) */
+body.light .bg-ink-800 {
+  background-color: #f4f6ff !important;
+}
+
+/* Override text colours specifically inside modals/cards for light */
+body.light .bg-ink-800 .text-white           { color: #1e2a4a !important; }
+body.light .bg-ink-800 .text-white\/90       { color: #2d3a56 !important; }
+body.light .bg-ink-800 .text-white\/80       { color: #374151 !important; }
+body.light .bg-ink-800 .text-white\/70       { color: #4b5563 !important; }
+body.light .bg-ink-800 .text-white\/65       { color: #6b7280 !important; }
+body.light .bg-ink-800 .text-white\/60       { color: #6b7280 !important; }
+body.light .bg-ink-800 .text-white\/50       { color: #9ca3af !important; }
+body.light .bg-ink-800 .text-white\/40       { color: #bbbdc4 !important; }
+body.light .bg-ink-800 .text-white\/30       { color: #d1d5db !important; }
+body.light .bg-ink-800 .border-white\/10     { border-color: rgba(0,0,0,0.10) !important; }
+body.light .bg-ink-800 .border-white\/5      { border-color: rgba(0,0,0,0.06) !important; }
+body.light .bg-ink-800 .bg-ink-900\/50       { background-color: rgba(210,218,255,0.45) !important; }
+body.light .bg-ink-800 .bg-white\/8,
+body.light .bg-ink-800 .bg-white\/5,
+body.light .bg-ink-800 .bg-white\/3          { background-color: rgba(0,0,0,0.04) !important; }
+body.light .bg-ink-800 .border-white\/10     { border-color: rgba(0,0,0,0.09) !important; }
+body.light .bg-ink-800 .chip                 { background: rgba(0,0,0,0.05) !important; border-color: rgba(0,0,0,0.1) !important; color: #374151 !important; }
+body.light .bg-ink-800 .hover\:bg-white\/10:hover { background-color: rgba(0,0,0,0.06) !important; }
+
 /* Scrollbar */
 body.light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15) !important; }
 body.light ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25) !important; }
