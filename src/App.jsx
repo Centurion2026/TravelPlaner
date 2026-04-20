@@ -174,6 +174,8 @@ export default function App() {
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
+  const totalPeople = form.adults + form.children
+
   const [exploreLoading, setExploreLoading] = useState(false)
   const [exploreSuggestions, setExploreSuggestions] = useState(null)
   const [exploreError, setExploreError] = useState(null)
