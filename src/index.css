@@ -195,6 +195,21 @@ body.light .text-violet-300  { color: #6d28d9 !important; }
 /* Section title */
 body.light .section-title { color: #1e2a4a !important; }
 
+/* Explore cards dual-mode text */
+body:not(.light) .dark-text { color: #f3f4f6; }
+body:not(.light) .dark-text-muted { color: rgba(255,255,255,0.55); }
+body.light .dark-text { color: #111827; }
+body.light .dark-text-muted { color: #6b7280; }
+body.light .explore-card .text-white\/50 { color: #6b7280 !important; }
+body.light .explore-card .text-white\/40 { color: #9ca3af !important; }
+body.light .explore-card .text-white\/30 { color: #d1d5db !important; }
+body.light .explore-card .text-white { color: #111827 !important; }
+body.light .explore-card .bg-white\/5 { background: rgba(0,0,0,0.04) !important; }
+
+/* Print header */
+@media screen { .print\:block { display: none !important; } }
+@media print  { .print\:block { display: block !important; } }
+
 /* Scrollbar */
 body.light .bg-ink-800 p,
 body.light .bg-ink-800 li,

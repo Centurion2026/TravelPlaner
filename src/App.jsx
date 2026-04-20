@@ -54,8 +54,34 @@ async function reverseGeocode(lat, lng) {
   }
 }
 
-// Izvuci samo naziv grada (prije zareza)
-const cityOnly = (str) => str ? str.split(',')[0].trim() : ''
+// Fetch public holidays from date.nager.at (free, no key)
+async function fetchHolidays(destination, departDate, returnDate) {
+  try {
+    // Get country code from Nominatim
+    const city = destination.split(',')[0].trim()
+    const geo = await fetch('https://nominatim.openstreetmap.org/search?q=' +
+      encodeURIComponent(city) + '&format=json&limit=1&addressdetails=1',
+      { headers: { 'Accept-Language': 'en', 'User-Agent': 'PutniPlaner/1.0' } })
+    const geoData = await geo.json()
+    const countryCode = geoData?.[0]?.address?.country_code?.toUpperCase()
+    if (!countryCode) return null
+
+    const year = departDate.slice(0, 4)
+    const resp = await fetch('https://date.nager.at/api/v3/PublicHolidays/' + year + '/' + countryCode)
+    if (!resp.ok) return null
+    const all = await resp.json()
+
+    // Filter to trip dates
+    const dep = new Date(departDate)
+    const ret = new Date(returnDate || departDate)
+    const inTrip = all.filter(h => {
+      const d = new Date(h.date)
+      return d >= dep && d <= ret
+    })
+
+    return { countryCode, all: inTrip, country: geoData?.[0]?.address?.country }
+  } catch { return null }
+}
 // Slug za URL (lowercase, razmaci -> crtice)
 const citySlug = (str) => cityOnly(str).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
 
@@ -154,6 +180,7 @@ export default function App() {
     transport: 'plane',
   })
   const [loading, setLoading] = useState(false)
+  const [loadingStep, setLoadingStep] = useState(0)
   const [error, setError] = useState(null)
   const [plan, setPlan] = useState(null)
   const [planForm, setPlanForm] = useState(null)
@@ -223,8 +250,55 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  // Auto-clear childrenAges kad children=0
+  // Share link — read URL params on mount
   useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search)
+      if (p.get('from') || p.get('to')) {
+        setForm(f => ({
+          ...f,
+          origin:      p.get('from')      || f.origin,
+          destination: p.get('to')        || f.destination,
+          departDate:  p.get('dep')       || f.departDate,
+          returnDate:  p.get('ret')       || f.returnDate,
+          adults:      parseInt(p.get('adults'))   || f.adults,
+          children:    parseInt(p.get('children')) || f.children,
+          childrenAges:p.get('ages')      || f.childrenAges,
+          transport:   p.get('transport') || f.transport,
+        }))
+        // Clean URL after reading
+        window.history.replaceState({}, '', window.location.pathname)
+      }
+    } catch {}
+  }, [])
+
+  const [copied, setCopied] = useState(false)
+  const handleShareLink = () => {
+    const p = new URLSearchParams({
+      from: form.origin, to: form.destination,
+      dep: form.departDate, ret: form.returnDate,
+      adults: form.adults, children: form.children,
+      ages: form.childrenAges, transport: form.transport,
+    })
+    const url = window.location.origin + window.location.pathname + '?' + p.toString()
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2500)
+    }).catch(() => {
+      // Fallback: select + copy
+      const el = document.createElement('textarea')
+      el.value = url
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2500)
+    })
+  }
+
+  // Holidays state (fetched after plan loads)
+  const [holidays, setHolidays] = useState(null)
     if (form.children === 0 && form.childrenAges !== '') {
       setForm(f => ({ ...f, childrenAges: '' }))
     }
@@ -283,6 +357,18 @@ export default function App() {
     planForm.transport !== form.transport
   )
 
+  const LOADING_STEPS = [
+    { icon: '📍', text: 'Geocodiram destinaciju...' },
+    { icon: '✈️', text: 'Tražim letove i prevoz...' },
+    { icon: '🏛️', text: 'Dohvatam atrakcije i muzeje...' },
+    { icon: '🌤️', text: 'Provjera vremenske prognoze...' },
+    { icon: '🤖', text: 'AI analizira grad i zamke...' },
+    { icon: '🏠', text: 'Tražim smještaj u blizini...' },
+    { icon: '💱', text: 'Valuta i lokalne informacije...' },
+    { icon: '🛂', text: 'Provjera vize za BiH pasoš...' },
+    { icon: '💰', text: 'Računam okvirni budžet...' },
+  ]
+
   const handleSubmit = async (e) => {
     e?.preventDefault?.()
     if (!form.origin.trim()) { setError('Unesi polazak ili dozvoli lokaciju.'); return }
@@ -292,7 +378,15 @@ export default function App() {
       setError('Datum polaska je u prošlosti.'); return
     }
     if (totalPeople < 1) { setError('Mora biti barem jedna osoba.'); return }
-    setError(null); setLoading(true); setPlan(null); setPlanForm(null)
+    setError(null); setLoading(true); setLoadingStep(0); setPlan(null); setPlanForm(null); setHolidays(null)
+
+    // Animate loading steps
+    let stepIdx = 0
+    const stepTimer = setInterval(() => {
+      stepIdx = Math.min(stepIdx + 1, LOADING_STEPS.length - 1)
+      setLoadingStep(stepIdx)
+    }, 2800)
+
     try {
       const r = await fetch('/api/plan', {
         method: 'POST',
@@ -307,9 +401,15 @@ export default function App() {
       setPlan(data)
       setPlanForm({ ...form })
       if (data.groq_limits) setGroqLimits(data.groq_limits)
+
+      // Fetch holidays for destination country
+      if (data.destination_coords) {
+        fetchHolidays(form.destination, form.departDate, form.returnDate).then(setHolidays)
+      }
     } catch (err) {
       setError(parseErrorMessage(err.message || String(err)))
     } finally {
+      clearInterval(stepTimer)
       setLoading(false)
     }
   }
@@ -331,6 +431,7 @@ export default function App() {
             loading={loading} error={error} onRetry={handleSubmit}
             onExplore={handleExplore} exploreLoading={exploreLoading} exploreError={exploreError}
             geoStatus={geoStatus} onGeoRequest={requestGeolocation}
+            onShare={handleShareLink} copied={copied}
           />
           {exploreLoading && (
             <div className="card mt-4 flex items-center gap-3 text-white/70">
@@ -347,11 +448,11 @@ export default function App() {
             />
           )}
           {groqLimits && <GroqStatusBar limits={groqLimits} />}
-          {loading && <LoadingState />}
+          {loading && <LoadingState step={loadingStep} steps={LOADING_STEPS} />}
           {isStale && !loading && <StaleBanner onRefresh={handleSubmit} />}
           {plan?._partial_failures?.length > 0 && !loading && <PartialWarning plan={plan} />}
         </div>
-        {plan && <Results plan={plan} form={planForm || form} totalPeople={(planForm || form).adults + (planForm || form).children} />}
+        {plan && <Results plan={plan} form={planForm || form} totalPeople={(planForm || form).adults + (planForm || form).children} holidays={holidays} />}
       </main>
       <Footer onAbout={() => setShowAbout(true)} />
       <ScrollToTop />
@@ -430,7 +531,7 @@ function GeoPrompt({ onAllow, onSkip }) {
   )
 }
 
-function FormCard({ form, setForm, onSubmit, loading, error, onRetry, geoStatus, onGeoRequest, onExplore, exploreLoading, exploreError }) {
+function FormCard({ form, setForm, onSubmit, loading, error, onRetry, geoStatus, onGeoRequest, onExplore, exploreLoading, exploreError, onShare, copied }) {
   const update = (k) => (e) => setForm({ ...form, [k]: e.target.value })
   const updateNum = (k) => (e) => setForm({ ...form, [k]: Math.max(0, parseInt(e.target.value) || 0) })
 
@@ -511,13 +612,19 @@ function FormCard({ form, setForm, onSubmit, loading, error, onRetry, geoStatus,
           onClick={onExplore}
           disabled={loading || exploreLoading}
           className="flex items-center gap-2 bg-violet-600/80 hover:bg-violet-500 disabled:opacity-50 text-white font-semibold rounded-xl px-5 py-3 transition-colors"
-          title="AI predlaže 6 europskih destinacija na osnovu tvog polaska i datuma"
         >
           {exploreLoading ? (
             <><span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Tražim...</>
-          ) : (
-            <>🌍 Gdje da idem?</>
-          )}
+          ) : <>🌍 Gdje da idem?</>}
+        </button>
+        <button
+          type="button"
+          onClick={onShare}
+          disabled={loading}
+          className="flex items-center gap-2 bg-white/8 hover:bg-white/15 text-white/70 font-semibold rounded-xl px-4 py-3 transition-colors border border-white/10"
+          title="Kopiraj link sa podacima iz forme"
+        >
+          {copied ? '✓ Kopirano!' : '🔗 Dijeli plan'}
         </button>
         <div className="text-white/50 text-sm">
           {travelerSummary(form.adults, form.children, form.childrenAges)}
@@ -557,7 +664,13 @@ function ExploreSuggestions({ data, form, onPick, onClose }) {
   const origin = form.origin.split(',')[0].trim()
 
   return (
-    <div className="card mt-4 border-violet-500/20 bg-gradient-to-br from-violet-900/20 to-ink-800/60">
+    <div className="card mt-4 border-violet-500/20" style={{background: 'var(--explore-bg, rgba(139,92,246,0.08))'}}>
+      <style>{`
+        body:not(.light) { --explore-bg: rgba(139,92,246,0.08); --explore-card: rgba(15,20,50,0.6); --explore-card-top: rgba(139,92,246,0.12); }
+        body.light { --explore-bg: rgba(237,233,254,0.7); --explore-card: rgba(255,255,255,0.95); --explore-card-top: rgba(237,233,254,0.95); }
+        .explore-card { background: var(--explore-card); }
+        .explore-card-top { background: var(--explore-card-top); }
+      `}</style>
       <div className="flex items-center justify-between mb-4">
         <div>
           <div className="section-title mb-0">🌍 Gdje da idem? <span className="text-violet-400 text-base font-normal">— AI preporuke</span></div>
@@ -578,27 +691,27 @@ function ExploreSuggestions({ data, form, onPick, onClose }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {data.map((s, i) => (
-          <div key={i} className={`rounded-2xl border p-4 flex flex-col gap-3 transition-all hover:scale-[1.01] ${i === 0 ? 'border-violet-500/40 bg-violet-500/10' : 'border-white/8 bg-ink-900/40'}`}>
+          <div key={i} className={`explore-card rounded-2xl border p-4 flex flex-col gap-3 transition-all hover:scale-[1.01] ${i === 0 ? 'explore-card-top border-violet-500/40' : 'border-black/5 dark:border-white/8'}`}>
             {/* Header */}
             <div className="flex items-start justify-between gap-2">
               <div>
-                {i === 0 && <div className="text-violet-400 text-[10px] font-bold uppercase tracking-wide mb-1">AI top izbor</div>}
+                {i === 0 && <div className="text-violet-500 text-[10px] font-bold uppercase tracking-wide mb-1">AI top izbor</div>}
                 <div className="flex items-center gap-2">
                   <span className="text-2xl">{s.flag}</span>
                   <div>
-                    <div className="text-white font-bold text-base leading-tight">{s.city}</div>
-                    <div className="text-white/50 text-xs">{s.country}</div>
+                    <div className="text-gray-900 dark-text font-bold text-base leading-tight">{s.city}</div>
+                    <div className="text-gray-500 dark-text-muted text-xs">{s.country}</div>
                   </div>
                 </div>
               </div>
               <div className="text-right flex-shrink-0">
-                <div className="text-white/30 text-[10px] uppercase tracking-wide">Score</div>
-                <div className={`text-xl font-black ${s.score >= 85 ? 'text-emerald-400' : s.score >= 70 ? 'text-amber-400' : 'text-white/60'}`}>{s.score}</div>
+                <div className="text-gray-400 text-[10px] uppercase tracking-wide">Score</div>
+                <div className={`text-xl font-black ${s.score >= 85 ? 'text-emerald-500' : s.score >= 70 ? 'text-amber-500' : 'text-gray-400'}`}>{s.score}</div>
               </div>
             </div>
 
             {/* Tagline */}
-            <p className="text-white/65 text-xs leading-snug">{s.tagline}</p>
+            <p className="text-gray-600 dark-text-muted text-xs leading-snug">{s.tagline}</p>
 
             {/* Why now */}
             {s.why_now && (
@@ -709,31 +822,65 @@ function PartialWarning({ plan }) {
   )
 }
 
-function LoadingState() {
+function LoadingState({ step = 0, steps = [] }) {
+  const pct = steps.length ? Math.round(((step + 1) / steps.length) * 100) : 10
+  const current = steps[step] || { icon: '⏳', text: 'Učitavam...' }
   return (
     <div className="card mt-6">
-      <div className="flex items-center gap-3 mb-3">
-        <div className="w-5 h-5 border-2 border-accent-400 border-t-transparent rounded-full animate-spin"></div>
-        <div className="font-semibold text-white">Preuzimam javne podatke…</div>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-6 h-6 border-2 border-accent-400 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
+        <div>
+          <div className="font-semibold text-white text-base">
+            {current.icon} {current.text}
+          </div>
+          <div className="text-white/40 text-xs mt-0.5">Obično 15–25 sekundi ukupno</div>
+        </div>
       </div>
-      <div className="text-white/50 text-sm grid grid-cols-2 gap-x-4 gap-y-1">
-        <div>🧭 Prevoz do destinacije</div>
-        <div>🏠 Smještaj i lokacija</div>
-        <div>🎯 15 atrakcija + itinerarij</div>
-        <div>🚆 Javni prevoz u gradu</div>
-        <div>🌤️ Vrijeme i garderoba</div>
-        <div>🍴 Hrana u blizini</div>
-        <div>🛂 Viza za BiH pasoš</div>
-        <div>💰 Budžet i troškovi</div>
+
+      {/* Progress bar */}
+      <div className="h-1.5 bg-white/8 rounded-full overflow-hidden mb-4">
+        <div
+          className="h-full bg-accent-500 rounded-full transition-all duration-[2600ms] ease-out"
+          style={{ width: pct + '%' }}
+        />
       </div>
-      <div className="mt-3 text-xs text-white/30">Obično 10–25 sekundi.</div>
+
+      {/* Step grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+        {steps.map((s, i) => (
+          <div key={i} className={`flex items-center gap-1.5 text-xs rounded-lg px-2 py-1.5 transition-all ${
+            i < step ? 'text-emerald-400 bg-emerald-500/10' :
+            i === step ? 'text-accent-400 bg-accent-500/10 font-semibold' :
+            'text-white/25'
+          }`}>
+            <span>{i < step ? '✓' : s.icon}</span>
+            <span className="truncate">{s.text.replace('...', '')}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
-function Results({ plan, form, totalPeople }) {
+function Results({ plan, form, totalPeople, holidays }) {
+  const days = Math.max(1, Math.round((new Date(form.returnDate) - new Date(form.departDate)) / 86400000))
   return (
     <div className="mt-8 space-y-6 print-container">
+      {/* Print-only header */}
+      <div className="hidden print:block mb-6 pb-4 border-b-2 border-gray-300">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Putni Planer</h1>
+            <p className="text-gray-500 text-sm">putni-planer.pages.dev</p>
+          </div>
+          <div className="text-right">
+            <div className="text-xl font-bold text-gray-900">{form.origin} → {form.destination}</div>
+            <div className="text-gray-600">{form.departDate} – {form.returnDate} · {days} {days === 1 ? 'dan' : 'dana'} · {totalPeople} {totalPeople === 1 ? 'osoba' : 'osoba'}</div>
+            <div className="text-gray-400 text-xs mt-1">Generisano: {new Date().toLocaleDateString('bs-BA')}</div>
+          </div>
+        </div>
+      </div>
+
       <TripSummary plan={plan} form={form} totalPeople={totalPeople} />
       <CityInfoCard data={plan.city_info} destination={form.destination} />
       <MapCard plan={plan} />
@@ -741,6 +888,7 @@ function Results({ plan, form, totalPeople }) {
       {form.transport === 'plane' && plan.alternative_dates?.length > 0 && (
         <AlternativeDatesCard data={plan.alternative_dates} currentDepart={form.departDate} currentReturn={form.returnDate} />
       )}
+      <HolidaysCard data={holidays} departDate={form.departDate} returnDate={form.returnDate} />
       <AccommodationCard data={plan.accommodation} options={plan.accommodation_options} form={form} totalPeople={totalPeople} />
       <AttractionsCard data={plan.attractions} form={form} />
       <ItineraryCard data={plan.itinerary} attractions={plan.attractions} />
@@ -2008,6 +2156,40 @@ function ScrollToTop() {
     >
       ↑
     </button>
+  )
+}
+
+function HolidaysCard({ data, departDate, returnDate }) {
+  if (!data) return null
+  if (!data.all?.length) return (
+    <div className="card border-emerald-500/10 bg-emerald-500/5">
+      <div className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
+        <span>🗓️</span> Nema državnih praznika u {data.country || 'destinaciji'} tokom vašeg boravka
+      </div>
+    </div>
+  )
+  return (
+    <div className="card border-amber-500/20">
+      <div className="section-title">🗓️ Državni praznici</div>
+      <p className="text-white/55 text-sm mb-3">
+        Tokom vašeg boravka u {data.country} ima {data.all.length} državni {data.all.length === 1 ? 'praznik' : 'praznika'} — neke atrakcije i radnje mogu biti zatvorene.
+      </p>
+      <div className="space-y-2">
+        {data.all.map((h, i) => (
+          <div key={i} className="flex items-center gap-3 bg-amber-500/8 border border-amber-500/20 rounded-xl px-4 py-2.5">
+            <span className="text-amber-400 text-lg">⚠️</span>
+            <div className="flex-grow">
+              <div className="text-white font-semibold text-sm">{h.localName || h.name}</div>
+              {h.localName && h.localName !== h.name && (
+                <div className="text-white/40 text-xs">{h.name}</div>
+              )}
+            </div>
+            <div className="text-amber-300 font-mono text-sm flex-shrink-0">{h.date}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 text-white/30 text-xs">Izvor: date.nager.at — javni praznici za {data.countryCode}</div>
+    </div>
   )
 }
 
