@@ -110,10 +110,21 @@ export default function App() {
   const [plan, setPlan] = useState(null)
   const [planForm, setPlanForm] = useState(null)
   const [showAbout, setShowAbout] = useState(false)
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem('pp_theme') || 'dark' } catch { return 'dark' }
+  })
 
   // Geolokacija state
   const [geoStatus, setGeoStatus] = useState('idle') // 'idle' | 'loading' | 'granted' | 'denied' | 'error'
   const [geoOffered, setGeoOffered] = useState(false) // da li smo već pitali
+
+  // Primijeni temu na body
+  useEffect(() => {
+    document.body.classList.toggle('light', theme === 'light')
+    try { localStorage.setItem('pp_theme', theme) } catch {}
+  }, [theme])
+
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
   const totalPeople = form.adults + form.children
 
@@ -209,7 +220,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen">
-      <Header hasPlan={!!plan} onAbout={() => setShowAbout(true)} />
+      <Header hasPlan={!!plan} onAbout={() => setShowAbout(true)} theme={theme} onToggleTheme={toggleTheme} />
       <main className="max-w-6xl mx-auto px-4 sm:px-6 pb-24">
         <div className="no-print">
           <Hero />
@@ -231,12 +242,13 @@ export default function App() {
         {plan && <Results plan={plan} form={planForm || form} totalPeople={(planForm || form).adults + (planForm || form).children} />}
       </main>
       <Footer onAbout={() => setShowAbout(true)} />
+      <ScrollToTop />
       {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
     </div>
   )
 }
 
-function Header({ hasPlan, onAbout }) {
+function Header({ hasPlan, onAbout, theme, onToggleTheme }) {
   return (
     <header className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 pb-2 flex items-center justify-between no-print">
       <div className="flex items-center gap-3">
@@ -249,6 +261,14 @@ function Header({ hasPlan, onAbout }) {
         </div>
       </div>
       <div className="flex items-center gap-2 sm:gap-3">
+        <button
+          onClick={onToggleTheme}
+          title={theme === 'dark' ? 'Prebaci na svijetlu temu' : 'Prebaci na tamnu temu'}
+          className="text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg px-3 py-2 transition-colors flex items-center gap-1.5"
+        >
+          {theme === 'dark' ? '☀️' : '🌙'}
+          <span className="hidden sm:inline">{theme === 'dark' ? 'Svijetla' : 'Tamna'}</span>
+        </button>
         <button onClick={onAbout} className="text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg px-3 py-2 transition-colors flex items-center gap-1.5">
           <span>ℹ️</span> <span className="hidden sm:inline">O aplikaciji</span>
         </button>
@@ -857,124 +877,6 @@ function AccommodationCard({ data, options, form, totalPeople }) {
   )
 }
 
-  return (
-    <div className="card avoid-break">
-      <div className="section-title">🏠 Smještaj <span className="text-white/40 text-sm font-normal">(za {totalPeople} {totalPeople === 1 ? 'osobu' : 'osoba'})</span></div>
-      {normalized.length > 1 && (
-        <div className="text-white/50 text-sm mb-3">Prikazane su opcije po blizini atrakcija — provjeri live cijene na Booking.com ili Airbnb.</div>
-      )}
-
-      {/* City price range banner when no live prices */}
-      {!hasTotal && !hasNightly && priceRange && (
-        <div className="bg-sky-500/10 border border-sky-500/20 rounded-xl p-4 mb-4">
-          <div className="text-sky-300 text-xs uppercase tracking-wide font-semibold mb-2">Tipične cijene smještaja u ovom gradu (po sobi/noć)</div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="text-center">
-              <div className="text-white/50 text-xs mb-1">Budžet</div>
-              <div className="text-white font-bold">~{formatEUR(priceRange.budget)}</div>
-            </div>
-            <div className="text-center border-x border-sky-500/20">
-              <div className="text-sky-300/70 text-xs mb-1">Srednja klasa</div>
-              <div className="text-sky-300 font-bold">~{formatEUR(priceRange.mid)}</div>
-            </div>
-            <div className="text-center">
-              <div className="text-white/50 text-xs mb-1">Luksuz</div>
-              <div className="text-white font-bold">~{formatEUR(priceRange.luxury)}</div>
-            </div>
-          </div>
-          <div className="text-white/40 text-xs mt-2">Za {nights} {nights === 1 ? 'noć' : 'noći'}: budžet ~{formatEUR(priceRange.budget * nights)}, srednja klasa ~{formatEUR(priceRange.mid * nights)}</div>
-        </div>
-      )}
-
-      <div className="bg-ink-900/50 rounded-xl p-4 border border-white/5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="font-semibold text-white">{primary.name}</div>
-            <div className="text-white/60 text-sm mt-1">{primary.area || primary.address}</div>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {primary.rating ? <span className="chip">⭐ {primary.rating}</span> : null}
-              {primary.beds ? <span className="chip">🛏️ {primary.beds} kreveta</span> : null}
-              {primary.distance_to_center_km !== undefined && primary.distance_to_center_km !== null ? <span className="chip">📏 {primary.distance_to_center_km} km od centra</span> : null}
-            </div>
-          </div>
-          <div className="text-right flex-shrink-0">
-            {hasTotal ? (
-              <>
-                <div className="text-accent-400 font-bold">{formatEUR(primary.total_price_eur)}</div>
-                {hasNightly && <div className="text-white/40 text-xs">{formatEUR(primary.price_per_night_eur)} / noć</div>}
-                <div className="text-white/40 text-xs">{nights} {nights === 1 ? 'noć' : 'noći'}</div>
-              </>
-            ) : hasNightly ? (
-              <>
-                <div className="text-accent-400 font-bold">{formatEUR(primary.price_per_night_eur)}</div>
-                <div className="text-white/40 text-xs">po noći</div>
-                <div className="text-white/40 text-xs">≈ {formatEUR(primary.price_per_night_eur * nights)} ukupno</div>
-              </>
-            ) : (
-              <>
-                <div className="text-white/50 text-sm font-medium">Live cijena</div>
-                <div className="text-white/30 text-xs">provjeri na Booking</div>
-              </>
-            )}
-          </div>
-        </div>
-        {primary.why && <p className="text-white/70 text-sm mt-3">{primary.why}</p>}
-      </div>
-
-      {alternatives.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-4">
-          {alternatives.map((item, index) => {
-            const itemHasTotal = typeof item.total_price_eur === 'number' && Number.isFinite(item.total_price_eur) && item.total_price_eur > 0
-            const itemHasNightly = typeof item.price_per_night_eur === 'number' && Number.isFinite(item.price_per_night_eur) && item.price_per_night_eur > 0
-            return (
-              <div key={`${item.name}-${item.address || index}`} className="bg-ink-900/50 rounded-xl p-4 border border-white/5">
-                <div className="font-semibold text-white">{item.name}</div>
-                <div className="text-white/60 text-sm mt-1">{item.area || item.address}</div>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {item.rating ? <span className="chip">⭐ {item.rating}</span> : null}
-                  {item.distance_to_center_km !== undefined && item.distance_to_center_km !== null ? <span className="chip">📏 {item.distance_to_center_km} km</span> : null}
-                </div>
-                <div className="mt-3">
-                  {itemHasTotal ? (
-                    <>
-                      <div className="text-accent-400 font-bold">{formatEUR(item.total_price_eur)}</div>
-                      <div className="text-white/40 text-xs">ukupno • {formatEUR(item.total_price_eur / nights)}/noć</div>
-                    </>
-                  ) : itemHasNightly ? (
-                    <>
-                      <div className="text-accent-400 font-bold">{formatEUR(item.price_per_night_eur)}</div>
-                      <div className="text-white/40 text-xs">po noći • ≈{formatEUR(item.price_per_night_eur * nights)} ukupno</div>
-                    </>
-                  ) : (
-                    <a href={`https://www.booking.com/searchresults.html?${new URLSearchParams({ ss: item.name, checkin: form.departDate, checkout: form.returnDate, group_adults: String(form.adults), group_children: String(form.children) })}`}
-                      target="_blank" rel="noreferrer"
-                      className="text-accent-400 hover:text-accent-300 text-sm font-semibold transition-colors">
-                      Provjeri cijenu →
-                    </a>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      <div className="mt-4 pt-4 border-t border-white/5 flex flex-wrap gap-2 no-print">
-        <a href={URLS.booking(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
-          🏨 Booking.com →
-        </a>
-        <a href={URLS.airbnb(form)} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
-          🏡 Airbnb →
-        </a>
-        <a href={`https://www.hotels.com/Hotel-Search?${new URLSearchParams({ destination: form.destination, 'date-picker-start': form.departDate, 'date-picker-end': form.returnDate, adults: String(form.adults) })}`}
-          target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
-          🛎️ Hotels.com →
-        </a>
-      </div>
-    </div>
-  )
-}
-
 function AttractionsCard({ data, form }) {
   if (!data || !data.length) return null
   const withPrice = data.filter(a => a.free || (typeof a.price_eur === 'number' && Number.isFinite(a.price_eur))).length
@@ -1217,65 +1119,69 @@ function FoodCard({ data, form }) {
 
 function ChainRestaurantsCard({ data, form }) {
   if (!data || !data.length) return null
-  // Filtriraj samo stvarne validne objekte sa imenom
   const valid = data.filter(c => c.name && c.name.trim())
   if (!valid.length) return null
 
   const chainEmojis = {
-    "McDonald's": '🍟',
-    'KFC': '🍗',
-    'Burger King': '🍔',
-    'Subway': '🥪',
-    'Starbucks': '☕',
-    'Pizza Hut': '🍕',
-    "Domino's": '🍕',
-    'Taco Bell': '🌮',
+    "McDonald's": '🍟', 'KFC': '🍗', 'Burger King': '🍔', 'Subway': '🥪',
+    'Starbucks': '☕', 'Pizza Hut': '🍕', "Domino's": '🍕', 'Taco Bell': '🌮',
+    'Tim Hortons': '☕', 'Popeyes': '🍗', "Wendy's": '🍔', 'Five Guys': '🍔',
+    'Shake Shack': '🍔', 'Costa Coffee': '☕', 'Pret A Manger': '🥗',
   }
 
   return (
     <div className="card">
       <div className="section-title">🌍 Globalni lanci restorana <span className="text-white/40 text-sm font-normal">(poznati brendovi)</span></div>
-      <div className="text-white/50 text-sm mb-3">Brza i predvidljiva hrana — korisno kad djeca žele nešto poznato.</div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div className="text-white/50 text-sm mb-4">Pronadjeni u radijusu 10 km od smjestaja. Svaki red prikazuje sve lokacije lanca u gradu.</div>
+      <div className="space-y-3">
         {valid.map((c, i) => {
           const emoji = chainEmojis[c.name] || '🍴'
           const officialUrl = URLS.chainOfficial[c.name]
-          const mapUrl = URLS.placeSearch(c.name, form.destination, c.lat, c.lng)
+          const locations = c.locations || [{ lat: 0, lng: 0, distance_m: c.distance_m, name: c.name }]
           return (
-            <div key={i} className="bg-ink-900/50 rounded-xl p-4 border border-white/5 flex flex-col">
-              <div className="flex items-start justify-between gap-2">
-                <div className="font-semibold text-white leading-tight flex items-center gap-2">
+            <div key={i} className="bg-ink-900/50 rounded-xl p-4 border border-white/5">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="font-semibold text-white flex items-center gap-2">
                   <span className="text-xl">{emoji}</span>
                   {c.name}
+                  <span className="text-white/40 text-xs font-normal">({locations.length} {locations.length === 1 ? 'lokacija' : 'lokacije'})</span>
                 </div>
-                {c.avg_price_eur !== undefined && c.avg_price_eur > 0 && (
-                  <div className="text-accent-400 font-semibold text-sm">
-                    ~{formatEUR(c.avg_price_eur)}
-                    <div className="text-white/40 text-[10px] font-normal">meni</div>
-                  </div>
-                )}
-              </div>
-              {c.menu_highlights && <div className="text-white/70 text-xs mt-2">{c.menu_highlights}</div>}
-              {c.distance_m !== undefined && c.distance_m > 0 && (
-                <div className="text-white/40 text-xs mt-2">📍 ~{c.distance_m} m od centra/smještaja</div>
-              )}
-              {c.note && <div className="text-white/60 text-xs mt-1 italic">{c.note}</div>}
-              <div className="flex flex-wrap gap-2 mt-3 pt-2 border-t border-white/5 no-print">
-                <a href={mapUrl} target="_blank" rel="noreferrer" className="text-sky-400 hover:text-sky-300 text-xs">
-                  🗺️ Lokacije na mapi
-                </a>
                 {officialUrl && (
-                  <a href={officialUrl} target="_blank" rel="noreferrer" className="text-sky-400 hover:text-sky-300 text-xs">
-                    🔗 Zvanični meni
+                  <a href={officialUrl} target="_blank" rel="noreferrer"
+                    className="text-sky-400 hover:text-sky-300 text-xs no-print flex-shrink-0">
+                    🔗 Meni
                   </a>
                 )}
+              </div>
+              {/* Lokacije */}
+              <div className="flex flex-wrap gap-2">
+                {locations.map((loc, j) => (
+                  <a
+                    key={j}
+                    href={URLS.placeSearch(c.name, form.destination, loc.lat, loc.lng)}
+                    target="_blank" rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 bg-white/5 hover:bg-accent-500/20 border border-white/10 hover:border-accent-500/30 rounded-lg px-3 py-1.5 text-xs text-white/70 hover:text-accent-400 transition-all no-print"
+                  >
+                    📍 {loc.distance_m > 0 ? `${loc.distance_m < 1000 ? loc.distance_m + ' m' : (loc.distance_m/1000).toFixed(1) + ' km'}` : 'Lokacija'}
+                    {loc.address ? ` — ${loc.address}` : ''}
+                    <span className="text-white/30">→</span>
+                  </a>
+                ))}
+                {/* Fallback Google Maps pretraga */}
+                <a
+                  href={`https://www.google.com/maps/search/${encodeURIComponent(c.name + ' ' + form.destination)}`}
+                  target="_blank" rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 bg-white/5 hover:bg-sky-500/20 border border-white/10 hover:border-sky-500/30 rounded-lg px-3 py-1.5 text-xs text-white/50 hover:text-sky-400 transition-all no-print"
+                >
+                  🗺️ Sve lokacije na Google Maps
+                </a>
               </div>
             </div>
           )
         })}
       </div>
       <div className="mt-3 text-xs text-white/40 italic no-print">
-        ℹ️ Ovdje su prikazane stvarne lokacije lanaca iz javnih OSM podataka. Cijene i meni provjeri direktno na zvaničnoj stranici lanca.
+        Lokacije iz OpenStreetMap podataka (10 km radijus). Klikni na dugme za navigaciju.
       </div>
     </div>
   )
@@ -1468,6 +1374,25 @@ function Row({ label, value }) {
       <span className="text-white/70">{label}</span>
       <span className="text-white font-semibold">{value}</span>
     </div>
+  )
+}
+
+function ScrollToTop() {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const onScroll = () => setVisible(window.scrollY > 500)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+  return (
+    <button
+      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      className={`scroll-top-btn no-print ${visible ? '' : 'hidden'}`}
+      title="Nazad na vrh — na formu za unos"
+      aria-label="Scroll to top"
+    >
+      ↑
+    </button>
   )
 }
 

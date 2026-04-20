@@ -13,6 +13,7 @@ body {
               #070b1a;
   color: #e5e7eb;
   min-height: 100vh;
+  transition: background 0.3s, color 0.3s;
 }
 
 @layer components {
@@ -36,13 +37,121 @@ body {
   }
 }
 
+/* ============================
+   LIGHT THEME
+   ============================ */
+body.light {
+  background:
+    radial-gradient(1200px 600px at 20% -10%, rgba(245, 158, 11, 0.07), transparent 60%),
+    radial-gradient(800px 500px at 100% 20%, rgba(239, 107, 31, 0.05), transparent 60%),
+    #eef2ff;
+  color: #1e2a4a;
+}
+
+body.light .card {
+  background: rgba(255,255,255,0.92) !important;
+  border-color: rgba(0,0,0,0.07) !important;
+  box-shadow: 0 2px 20px rgba(0,0,0,0.07), 0 1px 4px rgba(0,0,0,0.04) !important;
+}
+
+/* Text colour overrides */
+body.light .text-white           { color: #1e2a4a !important; }
+body.light .text-white\/90       { color: #2d3a56 !important; }
+body.light .text-white\/80       { color: #374151 !important; }
+body.light .text-white\/70       { color: #4b5563 !important; }
+body.light .text-white\/60       { color: #6b7280 !important; }
+body.light .text-white\/50       { color: #9ca3af !important; }
+body.light .text-white\/40       { color: #bbbdc4 !important; }
+body.light .text-white\/30       { color: #d1d5db !important; }
+body.light .placeholder-white\/30::placeholder { color: #9ca3af !important; }
+
+/* Section title */
+body.light .section-title { color: #1e2a4a !important; }
+
+/* Backgrounds */
+body.light .bg-ink-900\/50  { background-color: rgba(225,232,255,0.55) !important; }
+body.light .bg-ink-900\/70  { background-color: rgba(215,225,255,0.65) !important; }
+body.light .bg-ink-800\/60  { background-color: rgba(255,255,255,0.92) !important; }
+body.light .bg-ink-900\/30  { background-color: rgba(230,236,255,0.4) !important; }
+
+/* Borders */
+body.light .border-white\/5  { border-color: rgba(0,0,0,0.06) !important; }
+body.light .border-white\/10 { border-color: rgba(0,0,0,0.10) !important; }
+body.light .border-white\/20 { border-color: rgba(0,0,0,0.14) !important; }
+
+/* Form inputs */
+body.light .input {
+  background: rgba(220,228,255,0.5) !important;
+  border-color: rgba(0,0,0,0.12) !important;
+  color: #1e2a4a !important;
+}
+body.light input[type=date] { color-scheme: light; }
+
+/* Chips */
+body.light .chip {
+  background: rgba(0,0,0,0.05) !important;
+  border-color: rgba(0,0,0,0.10) !important;
+  color: #374151 !important;
+}
+
+/* Buttons */
+body.light .bg-white\/10 { background-color: rgba(0,0,0,0.06) !important; }
+body.light .hover\:bg-white\/20:hover { background-color: rgba(0,0,0,0.10) !important; }
+body.light .bg-white\/5  { background-color: rgba(0,0,0,0.04) !important; }
+
+/* Header */
+body.light header { border-bottom: 1px solid rgba(0,0,0,0.07); }
+
+/* Accent colours stay same */
+body.light .text-accent-400 { color: #d97706 !important; }
+body.light .text-accent-500 { color: #ef6b1f !important; }
+body.light .bg-accent-500\/20 { background-color: rgba(239,107,31,0.12) !important; }
+body.light .border-accent-500\/40 { border-color: rgba(239,107,31,0.3) !important; }
+body.light .bg-accent-500\/15 { background-color: rgba(239,107,31,0.08) !important; }
+body.light .border-accent-500\/30 { border-color: rgba(239,107,31,0.22) !important; }
+
+/* Sky / emerald tints */
+body.light .bg-sky-500\/10 { background-color: rgba(14,165,233,0.08) !important; }
+body.light .bg-emerald-500\/10 { background-color: rgba(16,185,129,0.08) !important; }
+body.light .bg-amber-500\/10 { background-color: rgba(245,158,11,0.08) !important; }
+body.light .bg-amber-500\/5  { background-color: rgba(245,158,11,0.05) !important; }
+
+/* Scrollbar */
+body.light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15) !important; }
+body.light ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25) !important; }
+
+/* ============================
+   SCROLL TO TOP BUTTON
+   ============================ */
+.scroll-top-btn {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 99;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  background: #ef6b1f;
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  box-shadow: 0 4px 16px rgba(239,107,31,0.4);
+  transition: opacity 0.2s, transform 0.2s, background 0.2s;
+}
+.scroll-top-btn:hover { background: #f59e0b; transform: translateY(-2px); }
+.scroll-top-btn.hidden { opacity: 0; pointer-events: none; transform: translateY(8px); }
+
 /* scrollbar */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.2); }
 
-/* Leaflet marker - transparentna pozadina za naš custom divIcon */
+/* Leaflet marker */
 .pp-marker {
   background: transparent !important;
   border: none !important;
@@ -52,66 +161,17 @@ body {
    PRINT / PDF EXPORT
    ============================ */
 @media print {
-  @page {
-    size: A4;
-    margin: 1.5cm;
-  }
-
-  /* Sakrij interaktivne elemente */
-  .no-print, .no-print-map {
-    display: none !important;
-  }
-
-  /* Svijetla pozadina za print */
-  body {
-    background: white !important;
-    color: #111 !important;
-  }
-
-  /* Kartice - crna linija, bez sjenke */
-  .card {
-    background: white !important;
-    border: 1px solid #ddd !important;
-    color: #111 !important;
-    box-shadow: none !important;
-    page-break-inside: avoid;
-    break-inside: avoid;
-    margin-bottom: 0.6cm;
-  }
-
-  /* Naslovi */
-  .section-title,
-  .card h1, .card h2, .card h3, .card h4 {
-    color: #111 !important;
-  }
-
-  /* Tekst */
-  .text-white, .text-white\/80, .text-white\/70, .text-white\/60, .text-white\/50, .text-white\/40 {
-    color: #222 !important;
-  }
-  .text-accent-400, .text-accent-500 {
-    color: #c2410c !important;
-  }
-
-  /* Chip / tagovi */
-  .chip {
-    background: #f5f5f5 !important;
-    border: 1px solid #ddd !important;
-    color: #333 !important;
-  }
-
-  /* Linkovi bez plave boje u printu */
-  a {
-    color: #333 !important;
-    text-decoration: none !important;
-  }
-
-  /* Gridovi - forsira single kolonu ako je preuzak prostor */
-  .avoid-break {
-    page-break-inside: avoid;
-    break-inside: avoid;
-  }
-
-  /* Hide scrollbars */
+  @page { size: A4; margin: 1.5cm; }
+  .no-print, .no-print-map { display: none !important; }
+  body { background: white !important; color: #111 !important; }
+  .card { background: white !important; border: 1px solid #ddd !important; color: #111 !important; box-shadow: none !important; page-break-inside: avoid; break-inside: avoid; margin-bottom: 0.6cm; }
+  .section-title, .card h1, .card h2, .card h3, .card h4 { color: #111 !important; }
+  .text-white, .text-white\/80, .text-white\/70, .text-white\/60, .text-white\/50, .text-white\/40 { color: #222 !important; }
+  .text-accent-400, .text-accent-500 { color: #c2410c !important; }
+  .chip { background: #f5f5f5 !important; border: 1px solid #ddd !important; color: #333 !important; }
+  a { color: #333 !important; text-decoration: none !important; }
+  .avoid-break { page-break-inside: avoid; break-inside: avoid; }
   ::-webkit-scrollbar { display: none; }
+  .scroll-top-btn { display: none !important; }
 }
+

@@ -1012,36 +1012,57 @@ out center tags 120;
 
 async function fetchChainRestaurants(anchor) {
   const query = `
-[out:json][timeout:25];
+[out:json][timeout:30];
 (
-  nwr(around:5000,${anchor.lat},${anchor.lng})["amenity"~"restaurant|fast_food|cafe"]["brand"];
-  nwr(around:5000,${anchor.lat},${anchor.lng})["amenity"~"restaurant|fast_food|cafe"]["name"];
+  nwr(around:10000,${anchor.lat},${anchor.lng})["amenity"~"restaurant|fast_food|cafe"]["brand"];
+  nwr(around:10000,${anchor.lat},${anchor.lng})["amenity"~"restaurant|fast_food|cafe"]["name"~"McDonald|KFC|Burger King|Subway|Starbucks|Pizza Hut|Domino|Taco Bell|Tim Hortons|Popeyes|Wendy|Five Guys|Shake Shack|Costa|Pret A Manger",i];
 );
-out center tags 120;
+out center tags 200;
 `
 
-  const brands = ["McDonald's", 'KFC', 'Burger King', 'Subway', 'Starbucks', 'Pizza Hut', "Domino's", 'Taco Bell']
+  const BRANDS = [
+    "McDonald's", 'KFC', 'Burger King', 'Subway', 'Starbucks',
+    'Pizza Hut', "Domino's", 'Taco Bell', 'Tim Hortons', "Popeyes",
+    "Wendy's", 'Five Guys', 'Shake Shack', 'Costa Coffee', 'Pret A Manger',
+  ]
+
   const elements = await fetchOverpass(query)
 
-  return dedupeByNameAndCoords(elements)
+  // Map each element to a brand + location
+  const located = dedupeByNameAndCoords(elements)
     .map((item) => {
       const tags = item.tags || {}
-      const brand = brands.find((candidate) => `${tags.brand || ''} ${tags.name || ''}`.toLowerCase().includes(candidate.toLowerCase()))
+      const combined = `${tags.brand || ''} ${tags.name || ''}`.toLowerCase()
+      const brand = BRANDS.find((b) => combined.includes(b.toLowerCase()))
       if (!brand) return null
       const point = coordsOf(item)
       return {
-        name: brand,
+        brand,
+        name: tags.name && tags.name.toLowerCase() !== brand.toLowerCase() ? tags.name : brand,
         avg_price_eur: parseCharge(tags),
         distance_m: Math.round(distanceKm(point, anchor) * 1000),
         lat: point.lat,
         lng: point.lng,
-        menu_highlights: '',
-        note: tags.name && tags.name !== brand ? tags.name : '',
+        address: buildAddress(tags),
       }
     })
     .filter(Boolean)
     .sort(sortByDistance)
-    .slice(0, 5)
+
+  // Group by brand - keep up to 3 locations per brand
+  const grouped = {}
+  for (const item of located) {
+    if (!grouped[item.brand]) grouped[item.brand] = []
+    if (grouped[item.brand].length < 3) grouped[item.brand].push(item)
+  }
+
+  // Return flat list: each brand entry with all its locations
+  return Object.entries(grouped).map(([brand, locations]) => ({
+    name: brand,
+    avg_price_eur: locations[0]?.avg_price_eur ?? null,
+    locations, // array of {distance_m, lat, lng, address, name}
+    distance_m: locations[0]?.distance_m ?? 0,
+  }))
 }
 
 async function fetchTransit(destinationGeo) {
