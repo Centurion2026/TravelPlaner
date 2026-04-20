@@ -781,21 +781,27 @@ function ExploreSuggestions({ data, form, onPick, onClose }) {
             </div>
 
             {/* Top 3 */}
-            {s.top_3?.length > 0 && (
-              <div className="text-xs text-white/50">
-                <span className="text-white/30 mr-1">Top:</span>
-                {s.top_3.join(' · ')}
-              </div>
-            )}
+            {(() => {
+              const t3 = Array.isArray(s.top_3) ? s.top_3 : (typeof s.top_3 === 'string' ? s.top_3.split(',').map(x=>x.trim()) : [])
+              return t3.length > 0 && (
+                <div className="text-xs text-white/50">
+                  <span className="text-white/30 mr-1">Top:</span>
+                  {t3.join(' · ')}
+                </div>
+              )
+            })()}
 
             {/* Tags */}
-            {s.best_for?.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {s.best_for.map(tag => (
-                  <span key={tag} className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${tagColors[tag] || 'bg-white/8 text-white/50'}`}>{tag}</span>
-                ))}
-              </div>
-            )}
+            {(() => {
+              const bf = Array.isArray(s.best_for) ? s.best_for : (typeof s.best_for === 'string' ? s.best_for.split(',').map(x=>x.trim()) : [])
+              return bf.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {bf.map(tag => (
+                    <span key={tag} className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${tagColors[tag] || 'bg-white/8 text-white/50'}`}>{tag}</span>
+                  ))}
+                </div>
+              )
+            })()}
 
             {/* Actions */}
             <div className="flex gap-2 mt-auto pt-2 border-t border-white/5 no-print">

@@ -294,6 +294,17 @@ export async function onRequestPost(context) {
     } catch (e) { return '' }
   }
 
+  // Normalize Groq fields that might come as strings instead of arrays
+  const toArr = function(v) {
+    if (Array.isArray(v)) return v
+    if (typeof v === 'string') return v.split(',').map(function(x){return x.trim()}).filter(Boolean)
+    return []
+  }
+
+  const normalizeS = function(s) {
+    return Object.assign({}, s, { best_for: toArr(s.best_for), top_3: toArr(s.top_3) })
+  }
+
   const buildLinks = function(s, cityOrigin, departDate, ret, adultsN, childrenN) {
     const city = (s.city || '').toString()
     const q = 'flights from ' + cityOrigin + ' to ' + city + ' on ' + departDate + ' returning ' + ret + ' ' + adultsN + ' adults'
@@ -320,7 +331,7 @@ export async function onRequestPost(context) {
 
       if (result && result.list && result.list.length > 0) {
         const enriched = result.list.slice(0, 6).map(function(s) {
-          return Object.assign({}, s, { flag: toFlag(s.flag), live_prices: true },
+          return Object.assign({}, normalizeS(s), { flag: toFlag(s.flag), live_prices: true },
             buildLinks(s, cityOrigin, departDate, ret, adultsN, childrenN))
         })
         return new Response(JSON.stringify({
@@ -344,7 +355,7 @@ export async function onRequestPost(context) {
   }
 
   const enriched = result.list.slice(0, 6).map(function(s) {
-    return Object.assign({}, s, { flag: toFlag(s.flag), live_prices: false },
+    return Object.assign({}, normalizeS(s), { flag: toFlag(s.flag), live_prices: false },
       buildLinks(s, cityOrigin, departDate, ret, adultsN, childrenN))
   })
 
