@@ -179,65 +179,29 @@ export default function App() {
   const [exploreError, setExploreError] = useState(null)
 
   const handleExplore = async () => {
-    if (!form.origin.trim()) { setExploreError('Unesi polazak da bismo znali odakle kreceš.'); return }
+    if (!form.origin.trim()) { setExploreError('Unesi polazak da bismo znali odakle kreces.'); return }
     if (!form.departDate) { setExploreError('Izaberi datum polaska.'); return }
     setExploreError(null)
     setExploreLoading(true)
     setExploreSuggestions(null)
     try {
-      const nights = Math.max(1, Math.round((new Date(form.returnDate) - new Date(form.departDate)) / 86400000))
-      const origin = form.origin.split(',')[0].trim()
-      const prompt = `You are a European travel recommendation engine. The traveler is departing from "${origin}" around ${form.departDate} for approximately ${nights} nights with ${form.adults} adults and ${form.children} children.
-
-Return ONLY a valid JSON array (no markdown, no explanation) of exactly 6 European city recommendations. Each must be a different country. Format:
-[
-  {
-    "city": "Amsterdam",
-    "country": "Netherlands",
-    "country_code": "NL",
-    "flag": "🇳🇱",
-    "tagline": "City of canals, bikes and world-class museums",
-    "why_now": "May is tulip season and weather is perfect for cycling",
-    "estimated_flight_eur": 85,
-    "flight_note": "Direct Wizz Air from Sarajevo ~85 EUR return",
-    "avg_daily_budget_eur": 120,
-    "weather_in_month": "18-22°C, partly cloudy",
-    "top_3": ["Rijksmuseum", "Anne Frank House", "Van Gogh Museum"],
-    "best_for": ["culture", "nightlife", "food"],
-    "visa_needed": false,
-    "direct_flight": true,
-    "crowd_level": "Moderate",
-    "score": 92,
-    "google_flights_url": "https://www.google.com/travel/flights?q=flights+from+${encodeURIComponent(origin)}+to+Amsterdam+on+${form.departDate}"
-  }
-]
-Rules:
-- Suggest cities realistically accessible from ${origin} by plane
-- Mix: 2 popular destinations + 2 hidden gems + 2 value picks
-- estimated_flight_eur: realistic return ticket price from ${origin} (round trip, economy)
-- avg_daily_budget_eur: realistic daily spend per person (accommodation + food + transport)
-- best_for: 2-3 tags from: culture|history|beaches|nightlife|food|nature|architecture|shopping|family|romance|adventure|art
-- crowd_level: "Low" | "Moderate" | "High" | "Very High"
-- score: 0-100 overall recommendation score based on value, weather, accessibility
-- visa_needed: whether BiH passport needs a visa
-- Sort by score descending`
-
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('/api/explore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 2000,
-          messages: [{ role: 'user', content: prompt }],
+          origin: form.origin,
+          departDate: form.departDate,
+          returnDate: form.returnDate,
+          adults: form.adults,
+          children: form.children,
         }),
       })
-      if (!response.ok) throw new Error('API greska')
       const data = await response.json()
-      const text = (data.content?.[0]?.text || '').replace(/```json\n?|\n?```/g, '').trim()
-      const parsed = JSON.parse(text)
-      setExploreSuggestions(parsed)
+      if (!response.ok) throw new Error(data.error || 'API greska')
+      if (!data.suggestions?.length) throw new Error('Nema prijedloga')
+      setExploreSuggestions(data.suggestions)
     } catch (err) {
-      setExploreError('Nije moguće dohvatiti prijedloge. Pokusaj ponovo.')
+      setExploreError(err.message || 'Nije moguce dohvatiti prijedloge. Pokusaj ponovo.')
     } finally {
       setExploreLoading(false)
     }
