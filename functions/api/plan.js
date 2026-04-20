@@ -530,16 +530,23 @@ async function mainLogic(context) {
 
   const countryInfo = await fetchCountryInfo(destinationGeo.countryCode, destinationGeo.country)
 
-  const [weather, transit, countryEmergency, cityKnowledge] = await Promise.all([
+  const [weather, transit, countryEmergency, cityKnowledge, osmElements] = await Promise.all([
     fetchWeather(destinationGeo, departDate, returnDate, env),
     fetchTransit(destinationGeo),
     buildEmergencyInfo(countryInfo),
     fetchCityKnowledge(destinationGeo, env),
+    fetchAttractionElements(destinationGeo),
   ])
+
+  // Build curated attraction list: Groq primary, OSM for coordinates/fallback
+  const osmAttractions = buildOsmAttractions(osmElements, destinationGeo)
+  const enrichedAttractions = cityKnowledge.attractions?.length
+    ? (buildAttractionsFromKnowledge(cityKnowledge.attractions, osmElements, destinationGeo) || osmAttractions)
+    : enrichAttractionsWithPrices(osmAttractions, [])
 
   const hotelDataPromise = fetchAccommodation({
     destinationGeo,
-    attractions,
+    attractions: enrichedAttractions,
     checkInDate: departDate,
     checkOutDate: returnDate,
     adults: adultsN,
@@ -571,14 +578,6 @@ async function mainLogic(context) {
   const accommodation = accommodationData?.primary || null
   const accommodationOptions = accommodationData?.options || (accommodation ? [accommodation] : [])
 
-  // Use Groq-curated attractions as primary (with OSM for coordinates)
-  // Fall back to OSM attractions if Groq not available
-  const osmElements = await fetchAttractionElements(destinationGeo)
-  const osmAttractions = buildOsmAttractions(osmElements, destinationGeo)
-  
-  const enrichedAttractions = cityKnowledge.attractions?.length
-    ? (buildAttractionsFromKnowledge(cityKnowledge.attractions, osmElements, destinationGeo) || osmAttractions)
-    : enrichAttractionsWithPrices(osmAttractions, [])
   const enrichedTransit = cityKnowledge.transit
     ? { ...transit, ...cityKnowledge.transit, modes: transit.modes?.length ? transit.modes : cityKnowledge.transit.modes }
     : transit
