@@ -210,7 +210,7 @@ export default function App() {
   }
 
   const handlePickDestination = (suggestion) => {
-    setForm(f => ({ ...f, destination: `${suggestion.city}, ${suggestion.country}`, transport: 'plane' }))
+    setForm(f => ({ ...f, destination: suggestion.city, transport: 'plane' }))
     setExploreSuggestions(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }

@@ -142,7 +142,60 @@ body.light .bg-ink-800 .border-white\/10     { border-color: rgba(0,0,0,0.09) !i
 body.light .bg-ink-800 .chip                 { background: rgba(0,0,0,0.05) !important; border-color: rgba(0,0,0,0.1) !important; color: #374151 !important; }
 body.light .bg-ink-800 .hover\:bg-white\/10:hover { background-color: rgba(0,0,0,0.06) !important; }
 
-/* Catch-all: any remaining white text inside modal */
+/* Attractions card - light mode text fixes */
+body.light .bg-accent-500\/5  { background-color: rgba(239,107,31,0.06) !important; }
+body.light .border-accent-500\/30 { border-color: rgba(239,107,31,0.25) !important; }
+
+/* Highlight strip badges */
+body.light .bg-accent-500\/20.border.text-accent-400 { color: #c2410c !important; }
+
+/* Attraction cards - ensure all text dark in light mode */
+body.light .rounded-xl .text-white\/65  { color: #374151 !important; }
+body.light .rounded-xl .text-white\/60  { color: #4b5563 !important; }
+body.light .rounded-xl .text-white\/55  { color: #6b7280 !important; }
+body.light .rounded-xl .text-white\/50  { color: #6b7280 !important; }
+body.light .rounded-xl .text-white\/40  { color: #9ca3af !important; }
+body.light .rounded-xl .text-white\/35  { color: #9ca3af !important; }
+body.light .rounded-xl .text-white\/30  { color: #bbbdc4 !important; }
+
+/* Why visit italic text - readable in light */
+body.light .text-accent-400\/80 { color: #c05621 !important; }
+body.light .text-emerald-400\/60 { color: #047857 !important; }
+body.light .text-accent-400\/60  { color: #c05621 !important; }
+
+/* Sky link colour */
+body.light .text-sky-400 { color: #0369a1 !important; }
+body.light .text-sky-400:hover { color: #0284c7 !important; }
+
+/* Chip in attraction cards */
+body.light .rounded-xl .chip { background: rgba(0,0,0,0.06) !important; border-color: rgba(0,0,0,0.10) !important; color: #374151 !important; }
+
+/* Broad catch-all: all text inside .card is dark in light mode */
+body.light .card { color: #1e2a4a; }
+body.light .card .text-white    { color: #1e2a4a !important; }
+body.light .card [class*="text-white\/"] { color: #374151 !important; }
+body.light .card .text-white\/65 { color: #374151 !important; }
+body.light .card .text-white\/60 { color: #4b5563 !important; }
+body.light .card .text-white\/55 { color: #6b7280 !important; }
+body.light .card .text-white\/50 { color: #6b7280 !important; }
+body.light .card .text-white\/40 { color: #9ca3af !important; }
+body.light .card .text-white\/35 { color: #9ca3af !important; }
+body.light .card .text-white\/30 { color: #bbbdc4 !important; }
+body.light .card .font-semibold  { color: #1e2a4a; }
+body.light .card .font-bold      { color: #1e2a4a; }
+
+/* Highlight strip badge text */
+body.light .text-accent-400 { color: #c05621 !important; }
+body.light .text-emerald-400 { color: #047857 !important; }
+body.light .text-rose-400    { color: #be123c !important; }
+body.light .text-amber-400   { color: #b45309 !important; }
+body.light .text-violet-400  { color: #7c3aed !important; }
+body.light .text-violet-300  { color: #6d28d9 !important; }
+
+/* Section title */
+body.light .section-title { color: #1e2a4a !important; }
+
+/* Scrollbar */
 body.light .bg-ink-800 p,
 body.light .bg-ink-800 li,
 body.light .bg-ink-800 span:not(.text-accent-400):not(.text-accent-500):not(.text-sky-400):not(.text-emerald-400):not(.text-amber-400):not(.text-rose-400):not(.text-sky-300):not(.text-emerald-300) {
