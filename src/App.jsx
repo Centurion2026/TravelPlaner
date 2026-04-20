@@ -1,0 +1,1579 @@
+import { useState, useEffect } from 'react'
+import MapView from './MapView.jsx'
+
+const today = new Date()
+const iso = (d) => d.toISOString().slice(0, 10)
+const plusDays = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d }
+
+function formatEUR(v) {
+  if (v === null || v === undefined || v === '') return '—'
+  if (typeof v === 'string') return v
+  if (typeof v === 'number' && !Number.isFinite(v)) return '—'
+  return new Intl.NumberFormat('bs-BA', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v)
+}
+
+function travelerSummary(adults, children, ages) {
+  const total = adults + children
+  if (total === 0) return '—'
+  if (children === 0) return `${adults} ${adults === 1 ? 'odrasla osoba' : 'odrasle osobe'}`
+  const agesText = ages?.trim() ? `, uzrasti ${ages.trim()}` : ''
+  return `${total} osoba: ${adults} odrasl${adults === 1 ? 'a' : 'e'} + ${children} djece${agesText}`
+}
+
+function parseErrorMessage(raw) {
+  if (!raw) return 'Nepoznata greška.'
+  try {
+    const parsed = JSON.parse(raw)
+    let msg = parsed.error || parsed.message || raw
+    if (parsed.details?.length) msg += '\n\n' + parsed.details.map(d => '• ' + d).join('\n')
+    if (parsed.hint) msg += '\n\n💡 ' + parsed.hint
+    return msg
+  } catch {
+    return raw
+  }
+}
+
+// Obrnuta geokodifikacija preko OpenStreetMap Nominatim (besplatno, bez ključa)
+async function reverseGeocode(lat, lng) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&addressdetails=1`, {
+      headers: { 'Accept-Language': 'bs,en' }
+    })
+    if (!r.ok) return null
+    const data = await r.json()
+    const a = data.address || {}
+    // Pokušaj izgraditi "Grad, Država" ili "Grad, Regija, Država"
+    const city = a.city || a.town || a.village || a.municipality || a.county
+    const country = a.country
+    if (city && country) return `${city}, ${country}`
+    if (city) return city
+    if (data.display_name) return data.display_name.split(',').slice(0, 2).join(',').trim()
+    return null
+  } catch {
+    return null
+  }
+}
+
+const URLS = {
+  googleFlights: (f) => `https://www.google.com/travel/flights?q=${encodeURIComponent(
+    `flights from ${f.origin} to ${f.destination} on ${f.departDate} returning ${f.returnDate} ${f.adults} adults${f.children ? ' ' + f.children + ' children' : ''}`
+  )}`,
+  booking: (f) => `https://www.booking.com/searchresults.html?${new URLSearchParams({
+    ss: f.destination, checkin: f.departDate, checkout: f.returnDate,
+    group_adults: String(f.adults), group_children: String(f.children),
+    no_rooms: String(Math.max(1, Math.ceil((f.adults + f.children) / 2))),
+  })}`,
+  airbnb: (f) => `https://www.airbnb.com/s/${encodeURIComponent(f.destination)}/homes?${new URLSearchParams({
+    checkin: f.departDate, checkout: f.returnDate,
+    adults: String(f.adults), children: String(f.children),
+  })}`,
+  googleMaps: (f) => `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(f.origin)}&destination=${encodeURIComponent(f.destination)}&travelmode=driving`,
+  flixbus: (f) => `https://global.flixbus.com/search?${new URLSearchParams({
+    departureCity: f.origin, arrivalCity: f.destination, rideDate: f.departDate,
+  })}`,
+  omio: (f) => `https://www.omio.com/search-frontend?${new URLSearchParams({
+    from: f.origin, to: f.destination, departureDate: f.departDate, returnDate: f.returnDate,
+  })}`,
+  // Koristi koordinate ako postoje, inace Google Maps pretraga po imenu+gradu
+  placeSearch: (name, destination, lat, lng) => {
+    if (lat && lng && lat !== 0 && lng !== 0) {
+      return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+    }
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name + ', ' + destination)}`
+  },
+  momondo: (f) => `https://www.momondo.com/flight-search/${encodeURIComponent(f.origin)}/${encodeURIComponent(f.destination)}/${f.departDate}/${f.returnDate}/?adults=${f.adults}&children=${f.children || 0}`,
+  chainOfficial: {
+    "McDonald's": 'https://www.mcdonalds.com/',
+    'KFC': 'https://global.kfc.com/',
+    'Burger King': 'https://www.burgerking.com/',
+    'Subway': 'https://www.subway.com/',
+    'Starbucks': 'https://www.starbucks.com/',
+    'Pizza Hut': 'https://www.pizzahut.com/',
+    "Domino's": 'https://www.dominos.com/',
+    'Taco Bell': 'https://www.tacobell.com/',
+  },
+}
+
+export default function App() {
+  const [form, setForm] = useState({
+    origin: '',
+    destination: '',
+    departDate: iso(plusDays(today, 14)),
+    returnDate: iso(plusDays(today, 21)),
+    adults: 2,
+    children: 2,
+    childrenAges: '13, 16',
+    transport: 'plane',
+  })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [plan, setPlan] = useState(null)
+  const [planForm, setPlanForm] = useState(null)
+  const [showAbout, setShowAbout] = useState(false)
+
+  // Geolokacija state
+  const [geoStatus, setGeoStatus] = useState('idle') // 'idle' | 'loading' | 'granted' | 'denied' | 'error'
+  const [geoOffered, setGeoOffered] = useState(false) // da li smo već pitali
+
+  const totalPeople = form.adults + form.children
+
+  // Auto-clear childrenAges kad children=0
+  useEffect(() => {
+    if (form.children === 0 && form.childrenAges !== '') {
+      setForm(f => ({ ...f, childrenAges: '' }))
+    }
+  }, [form.children])
+
+  // Pri mount-u, pokušaj iz localStorage dohvatiti sačuvani origin
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('putniplaner_origin')
+      if (saved && !form.origin) {
+        setForm(f => ({ ...f, origin: saved }))
+      }
+    } catch {}
+  }, [])
+
+  // Spremi origin u localStorage kad se promijeni
+  useEffect(() => {
+    try {
+      if (form.origin) localStorage.setItem('putniplaner_origin', form.origin)
+    } catch {}
+  }, [form.origin])
+
+  const requestGeolocation = () => {
+    if (!navigator.geolocation) {
+      setGeoStatus('error')
+      return
+    }
+    setGeoStatus('loading')
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords
+        const name = await reverseGeocode(latitude, longitude)
+        if (name) {
+          setForm(f => ({ ...f, origin: name }))
+          setGeoStatus('granted')
+        } else {
+          // Ako reverse geocoding padne, barem upiši koordinate
+          setForm(f => ({ ...f, origin: `${latitude.toFixed(4)}, ${longitude.toFixed(4)}` }))
+          setGeoStatus('granted')
+        }
+      },
+      (err) => {
+        setGeoStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'error')
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 3600000 }
+    )
+  }
+
+  const isStale = plan && planForm && (
+    planForm.origin !== form.origin ||
+    planForm.destination !== form.destination ||
+    planForm.departDate !== form.departDate ||
+    planForm.returnDate !== form.returnDate ||
+    planForm.adults !== form.adults ||
+    planForm.children !== form.children ||
+    planForm.transport !== form.transport
+  )
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault?.()
+    if (!form.origin.trim()) { setError('Unesi polazak ili dozvoli lokaciju.'); return }
+    if (!form.destination.trim()) { setError('Unesi destinaciju.'); return }
+    if (form.returnDate <= form.departDate) { setError('Datum povratka mora biti nakon polaska.'); return }
+    if (new Date(form.departDate) < new Date(iso(today))) {
+      setError('Datum polaska je u prošlosti.'); return
+    }
+    if (totalPeople < 1) { setError('Mora biti barem jedna osoba.'); return }
+    setError(null); setLoading(true); setPlan(null); setPlanForm(null)
+    try {
+      const r = await fetch('/api/plan', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      const rawText = await r.text()
+      if (!r.ok) throw new Error(rawText)
+      let data
+      try { data = JSON.parse(rawText) }
+      catch { throw new Error('Server je vratio nevažeći JSON: ' + rawText.slice(0, 200)) }
+      setPlan(data)
+      setPlanForm({ ...form })
+    } catch (err) {
+      setError(parseErrorMessage(err.message || String(err)))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen">
+      <Header hasPlan={!!plan} onAbout={() => setShowAbout(true)} />
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 pb-24">
+        <div className="no-print">
+          <Hero />
+          {!geoOffered && !form.origin && (
+            <GeoPrompt
+              onAllow={() => { setGeoOffered(true); requestGeolocation() }}
+              onSkip={() => setGeoOffered(true)}
+            />
+          )}
+          <FormCard
+            form={form} setForm={setForm} onSubmit={handleSubmit}
+            loading={loading} error={error} onRetry={handleSubmit}
+            geoStatus={geoStatus} onGeoRequest={requestGeolocation}
+          />
+          {loading && <LoadingState />}
+          {isStale && !loading && <StaleBanner onRefresh={handleSubmit} />}
+          {plan?._partial_failures?.length > 0 && !loading && <PartialWarning plan={plan} />}
+        </div>
+        {plan && <Results plan={plan} form={planForm || form} totalPeople={(planForm || form).adults + (planForm || form).children} />}
+      </main>
+      <Footer onAbout={() => setShowAbout(true)} />
+      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
+    </div>
+  )
+}
+
+function Header({ hasPlan, onAbout }) {
+  return (
+    <header className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 pb-2 flex items-center justify-between no-print">
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-accent-400 to-accent-500 flex items-center justify-center">
+          <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5 text-white"><path d="M2 12l20-9-9 20-2-9-9-2z" fill="currentColor"/></svg>
+        </div>
+        <div>
+          <div className="text-white font-bold tracking-tight">Putni Planer</div>
+          <div className="text-white/40 text-xs -mt-0.5">Live planiranje putovanja • besplatno</div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 sm:gap-3">
+        <button onClick={onAbout} className="text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg px-3 py-2 transition-colors flex items-center gap-1.5">
+          <span>ℹ️</span> <span className="hidden sm:inline">O aplikaciji</span>
+        </button>
+        {hasPlan && (
+          <button onClick={() => window.print()} className="text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg px-3 py-2 transition-colors flex items-center gap-1.5">
+            <span>📄</span> <span className="hidden sm:inline">Export PDF</span>
+          </button>
+        )}
+      </div>
+    </header>
+  )
+}
+
+function Hero() {
+  return (
+    <section className="pt-6 pb-8">
+      <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight">
+        Isplaniraj <span className="text-accent-400">savršeno putovanje</span><br />
+        <span className="text-white/60 text-xl sm:text-2xl font-semibold">Prevoz, smještaj, 15 atrakcija, itinerarij, mapa, viza i više — na jednom mjestu.</span>
+      </h1>
+    </section>
+  )
+}
+
+function GeoPrompt({ onAllow, onSkip }) {
+  return (
+    <div className="card mb-4 bg-gradient-to-br from-sky-900/40 to-ink-800/40 border-sky-500/20">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex-grow">
+          <div className="font-semibold text-white flex items-center gap-2">
+            <span>📍</span>Želiš li da automatski otkrijemo tvoj grad?
+          </div>
+          <div className="text-white/60 text-sm mt-1">
+            Koristimo tvoju lokaciju samo da popunimo polje "Polazak". Ništa se ne sprema van tvog uređaja.
+          </div>
+        </div>
+        <div className="flex gap-2 flex-shrink-0">
+          <button onClick={onAllow} className="bg-sky-500 hover:bg-sky-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+            Dozvoli
+          </button>
+          <button onClick={onSkip} className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+            Preskoči
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function FormCard({ form, setForm, onSubmit, loading, error, onRetry, geoStatus, onGeoRequest }) {
+  const update = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+  const updateNum = (k) => (e) => setForm({ ...form, [k]: Math.max(0, parseInt(e.target.value) || 0) })
+
+  return (
+    <form onSubmit={onSubmit} className="card space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div>
+          <label className="label flex items-center justify-between">
+            <span>Polazak</span>
+            <button
+              type="button"
+              onClick={onGeoRequest}
+              disabled={geoStatus === 'loading'}
+              className="text-xs text-sky-400 hover:text-sky-300 disabled:opacity-50 flex items-center gap-1"
+              title="Koristi moju lokaciju"
+            >
+              {geoStatus === 'loading' ? (
+                <><span className="inline-block w-3 h-3 border border-sky-400 border-t-transparent rounded-full animate-spin"></span>Tražim...</>
+              ) : geoStatus === 'granted' ? (
+                <>📍 Osvježi</>
+              ) : (
+                <>📍 Koristi lokaciju</>
+              )}
+            </button>
+          </label>
+          <input className="input" value={form.origin} onChange={update('origin')} placeholder="npr. Sarajevo" />
+          {geoStatus === 'denied' && (
+            <div className="text-xs text-amber-300/80 mt-1">Pristup lokaciji odbijen. Unesi ručno.</div>
+          )}
+          {geoStatus === 'error' && (
+            <div className="text-xs text-amber-300/80 mt-1">Lokacija nedostupna. Unesi ručno.</div>
+          )}
+        </div>
+        <div>
+          <label className="label">Destinacija</label>
+          <input className="input" value={form.destination} onChange={update('destination')} placeholder="npr. Rim, Italija" />
+        </div>
+        <div>
+          <label className="label">Datum polaska</label>
+          <input type="date" className="input" value={form.departDate} onChange={update('departDate')} min={iso(today)} />
+        </div>
+        <div>
+          <label className="label">Datum povratka</label>
+          <input type="date" className="input" value={form.returnDate} onChange={update('returnDate')} min={form.departDate} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-white/5">
+        <div>
+          <label className="label">Odrasli <span className="text-white/40">(18+)</span></label>
+          <input type="number" min="0" max="20" className="input" value={form.adults} onChange={updateNum('adults')} />
+        </div>
+        <div>
+          <label className="label">Djeca / tinejdžeri</label>
+          <input type="number" min="0" max="20" className="input" value={form.children} onChange={updateNum('children')} />
+        </div>
+        <div>
+          <label className="label">Uzrasti djece <span className="text-white/40">(opc.)</span></label>
+          <input className="input" value={form.childrenAges} onChange={update('childrenAges')} placeholder={form.children === 0 ? '—' : 'npr. 13, 16'} disabled={form.children === 0} />
+        </div>
+        <div>
+          <label className="label">Prevoz</label>
+          <select className="input" value={form.transport} onChange={update('transport')}>
+            <option value="plane">✈️ Avion</option>
+            <option value="car">🚗 Auto</option>
+            <option value="bus">🚌 Autobus</option>
+            <option value="train">🚆 Voz</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
+        <button type="submit" disabled={loading} className="btn-primary">
+          {loading ? 'Planiram…' : 'Isplaniraj putovanje'}
+        </button>
+        <div className="text-white/50 text-sm">
+          {travelerSummary(form.adults, form.children, form.childrenAges)}
+        </div>
+      </div>
+      {error && (
+        <div className="text-sm text-red-300 bg-red-900/30 border border-red-500/30 rounded-xl px-4 py-3 whitespace-pre-line">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-grow">{error}</div>
+            <button type="button" onClick={onRetry} className="flex-shrink-0 bg-red-500/30 hover:bg-red-500/50 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors">
+              ↻ Pokušaj ponovo
+            </button>
+          </div>
+        </div>
+      )}
+    </form>
+  )
+}
+
+function StaleBanner({ onRefresh }) {
+  return (
+    <div className="card mt-4 bg-amber-500/10 border-amber-500/30">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-amber-200 text-sm">
+          ⚠️ Promijenio si parametre putovanja. Plan ispod je iz prethodnog upita.
+        </div>
+        <button onClick={onRefresh} className="bg-amber-500 hover:bg-amber-400 text-white text-sm font-semibold rounded-lg px-3 py-1.5 transition-colors flex-shrink-0">
+          Osvježi plan
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function PartialWarning({ plan }) {
+  return (
+    <div className="card mt-4 bg-amber-500/10 border-amber-500/30">
+      <div className="text-amber-200 text-sm">
+        ⚠️ Neki dijelovi plana nisu imali javno dostupne podatke: <strong>{plan._partial_failures.join(', ')}</strong>. Te stavke su namjerno ostavljene prazne umjesto da budu izmišljene.
+      </div>
+    </div>
+  )
+}
+
+function LoadingState() {
+  return (
+    <div className="card mt-6">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-5 h-5 border-2 border-accent-400 border-t-transparent rounded-full animate-spin"></div>
+        <div className="font-semibold text-white">Preuzimam javne podatke…</div>
+      </div>
+      <div className="text-white/50 text-sm grid grid-cols-2 gap-x-4 gap-y-1">
+        <div>🧭 Prevoz do destinacije</div>
+        <div>🏠 Smještaj i lokacija</div>
+        <div>🎯 15 atrakcija + itinerarij</div>
+        <div>🚆 Javni prevoz u gradu</div>
+        <div>🌤️ Vrijeme i garderoba</div>
+        <div>🍴 Hrana u blizini</div>
+        <div>🛂 Viza za BiH pasoš</div>
+        <div>💰 Budžet i troškovi</div>
+      </div>
+      <div className="mt-3 text-xs text-white/30">Obično 10–25 sekundi.</div>
+    </div>
+  )
+}
+
+function Results({ plan, form, totalPeople }) {
+  return (
+    <div className="mt-8 space-y-6 print-container">
+      <TripSummary plan={plan} form={form} totalPeople={totalPeople} />
+      <MapCard plan={plan} />
+      <TransportCard plan={plan} form={form} totalPeople={totalPeople} />
+      {form.transport === 'plane' && plan.alternative_dates?.length > 0 && (
+        <AlternativeDatesCard data={plan.alternative_dates} currentDepart={form.departDate} currentReturn={form.returnDate} />
+      )}
+      <AccommodationCard data={plan.accommodation} options={plan.accommodation_options} form={form} totalPeople={totalPeople} />
+      <AttractionsCard data={plan.attractions} form={form} />
+      <ItineraryCard data={plan.itinerary} attractions={plan.attractions} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 avoid-break">
+        <TransitCard data={plan.transit} />
+        <WeatherCard data={plan.weather} />
+      </div>
+      <FoodCard data={plan.food} form={form} />
+      <ChainRestaurantsCard data={plan.chain_restaurants} form={form} />
+      <VisaCard data={plan.visa} />
+      <EmergencyCard data={plan.emergency} />
+      {plan.budget && <BudgetCard data={plan.budget} notes={plan.budget_notes} totalPeople={totalPeople} plan={plan} form={form} />}
+      {plan.tips && <TipsCard data={plan.tips} />}
+    </div>
+  )
+}
+
+function TripSummary({ plan, form, totalPeople }) {
+  const days = Math.max(1, Math.round((new Date(form.returnDate) - new Date(form.departDate)) / 86400000))
+  const transportEmoji = { plane: '✈️', car: '🚗', bus: '🚌', train: '🚆' }[form.transport] || '🧭'
+  const transportName = { plane: 'Avion', car: 'Auto', bus: 'Autobus', train: 'Voz' }[form.transport] || 'Prevoz'
+  return (
+    <div className="card bg-gradient-to-br from-ink-800/80 to-ink-700/40 avoid-break">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="chip">📍 {form.origin} → {form.destination}</span>
+        <span className="chip">🗓️ {form.departDate} — {form.returnDate}</span>
+        <span className="chip">⏱️ {days} {days === 1 ? 'dan' : 'dana'}</span>
+        <span className="chip">{transportEmoji} {transportName}</span>
+        <span className="chip">👥 {travelerSummary(form.adults, form.children, form.childrenAges)}</span>
+      </div>
+      {plan.summary && <p className="text-white/80 mt-4 leading-relaxed">{plan.summary}</p>}
+    </div>
+  )
+}
+
+function MapCard({ plan }) {
+  const hasCoords = plan.destination_coords?.lat || plan.attractions?.some(a => a.lat)
+  if (!hasCoords) return null
+  return (
+    <div className="card avoid-break no-print-map">
+      <div className="section-title">🗺️ Mapa destinacije</div>
+      <MapView plan={plan} />
+      <div className="flex flex-wrap gap-3 mt-3 text-xs text-white/60">
+        <LegendItem color="#ef6b1f" label="Atrakcije" />
+        <LegendItem color="#0ea5e9" label="Smještaj" />
+        <LegendItem color="#10b981" label="Hrana" />
+      </div>
+    </div>
+  )
+}
+
+function LegendItem({ color, label }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="w-3 h-3 rounded-full" style={{ background: color }}></span>
+      {label}
+    </span>
+  )
+}
+
+function TransportCard({ plan, form, totalPeople }) {
+  const mode = form.transport
+  const emptyMsg = (label) => (
+    <div className="card">
+      <div className="section-title">🧭 Prevoz: {label}</div>
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-amber-200 text-sm">
+        {plan.transport_notice || 'Javni live podaci za ovaj tip prevoza nisu dostupni preko besplatnog univerzalnog API-ja. Koristi direktnu pretragu ispod.'}
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2 no-print">
+        <ExternalSearchButtons form={form} mode={mode} />
+      </div>
+    </div>
+  )
+
+  if (mode === 'plane') {
+    if (!plan.flights?.length) {
+      return (
+        <div className="card">
+          <div className="section-title">✈️ Prevoz: Avion <span className="text-white/40 text-sm font-normal">({totalPeople} {totalPeople === 1 ? 'putnik' : 'putnika'})</span></div>
+          {plan.transport_notice && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-amber-200 text-sm mb-4">
+              {plan.transport_notice}
+            </div>
+          )}
+          <div className="text-white/60 text-sm mb-4">
+            Pretražuj live letove na više platformi — cijene se ažuriraju u realnom vremenu:
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 no-print">
+            {(plan.flight_search_links || [
+              { name: 'Google Flights', url: URLS.googleFlights(form), emoji: '🔍' },
+              { name: 'Kiwi.com', url: `https://www.kiwi.com/en/search/results/${encodeURIComponent(form.origin)}/${encodeURIComponent(form.destination)}/${form.departDate}/${form.returnDate}?adults=${form.adults}`, emoji: '🥝' },
+              { name: 'Kayak', url: `https://www.kayak.com/flights/${encodeURIComponent(form.origin)}-${encodeURIComponent(form.destination)}/${form.departDate}/${form.returnDate}/${form.adults}adults`, emoji: '🛩️' },
+              { name: 'Momondo', url: URLS.momondo(form), emoji: '🌐' },
+            ]).map((link) => (
+              <a key={link.name} href={link.url} target="_blank" rel="noreferrer"
+                className="flex flex-col items-center gap-2 bg-ink-900/50 hover:bg-accent-500/20 border border-white/10 hover:border-accent-500/40 rounded-xl p-4 transition-all group text-center">
+                <span className="text-2xl">{link.emoji}</span>
+                <span className="text-white font-semibold text-sm group-hover:text-accent-400 transition-colors">{link.name}</span>
+                <span className="text-white/40 text-xs">Otvori →</span>
+              </a>
+            ))}
+          </div>
+          <div className="bg-ink-900/30 border border-white/5 rounded-xl p-4 text-sm text-white/60">
+            <span className="text-white/80 font-semibold">💡 Savjet:</span> Kiwi.com često pronalazi kombinovane letove koji su jeftiniji. Poredjaj po cijeni, pa provjeri na Google Flights za direktne opcije.
+          </div>
+        </div>
+      )
+    }
+    return <FlightsCard data={plan.flights} form={form} totalPeople={totalPeople} />
+  }
+  if (mode === 'car') {
+    if (!plan.car_route) return emptyMsg('Auto')
+    return <CarRouteCard data={plan.car_route} form={form} />
+  }
+  if (mode === 'bus') {
+    if (!plan.bus_routes?.length) return emptyMsg('Autobus')
+    return <GroundRoutesCard data={plan.bus_routes} form={form} type="bus" totalPeople={totalPeople} />
+  }
+  if (mode === 'train') {
+    if (!plan.train_routes?.length) return emptyMsg('Voz')
+    return <GroundRoutesCard data={plan.train_routes} form={form} type="train" totalPeople={totalPeople} />
+  }
+  return null
+}
+
+function ExternalSearchButtons({ form, mode }) {
+  if (mode === 'plane') return <a href={URLS.googleFlights(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🔎 Google Flights →</a>
+  if (mode === 'car') return <a href={URLS.googleMaps(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🗺️ Google Maps ruta →</a>
+  if (mode === 'bus') return <a href={URLS.flixbus(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🔎 FlixBus →</a>
+  if (mode === 'train') return <a href={URLS.omio(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🔎 Omio →</a>
+  return null
+}
+
+function FlightsCard({ data, form, totalPeople }) {
+  return (
+    <div className="card">
+      <div className="section-title">✈️ Letovi <span className="text-white/40 text-sm font-normal">({totalPeople} {totalPeople === 1 ? 'putnik' : 'putnika'})</span></div>
+      <ul className="space-y-3">
+        {data.map((f, i) => (
+          <li key={i} className="bg-ink-900/50 rounded-xl p-4 border border-white/5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-semibold text-white truncate">{f.airline || 'Avio kompanija'}</div>
+                <div className="text-white/60 text-sm mt-0.5">{f.departure} → {f.arrival}</div>
+                <div className="text-white/40 text-xs mt-1">
+                  {f.stops === 0 ? 'Direktan let' : `${f.stops} presjedanja`}
+                  {f.duration ? ` • ${f.duration}` : ''}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-accent-400 font-bold">{formatEUR(f.price_total_eur)}</div>
+                <div className="text-white/40 text-xs">ukupno za {totalPeople}</div>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-4 pt-4 border-t border-white/5 flex flex-wrap gap-2 no-print">
+        <a href={URLS.googleFlights(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+          🔎 Traži letove na Google Flights →
+        </a>
+      </div>
+    </div>
+  )
+}
+
+function CarRouteCard({ data, form }) {
+  const primaryCost = data.round_trip_total_eur || data.total_cost_eur
+  const primaryLabel = data.round_trip_total_eur ? 'Ukupan trošak povratnog puta' : 'Procijenjeni trošak jednog smjera'
+
+  return (
+    <div className="card">
+      <div className="section-title">🚗 Auto ruta <span className="text-white/40 text-sm font-normal">{form.origin} → {form.destination}</span></div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        {data.distance_km ? <StatBox label="Udaljenost" value={`${data.distance_km} km`} /> : null}
+        {data.duration_hours ? <StatBox label="Vrijeme vožnje" value={`${data.duration_hours} h`} /> : null}
+        {data.fuel_cost_eur !== undefined && data.fuel_cost_eur !== null ? <StatBox label="Gorivo" value={formatEUR(data.fuel_cost_eur)} /> : null}
+        {data.toll_cost_eur !== undefined && data.toll_cost_eur !== null ? <StatBox label="Putarine" value={formatEUR(data.toll_cost_eur)} /> : null}
+      </div>
+      {primaryCost !== undefined && primaryCost !== null && primaryCost > 0 && (
+        <div className="bg-accent-500/20 border border-accent-500/40 rounded-xl p-3 mb-4">
+          <div className="text-white/60 text-xs uppercase tracking-wide">{primaryLabel}</div>
+          <div className="text-accent-400 font-bold text-xl">{formatEUR(primaryCost)}</div>
+          {data.round_trip_total_eur > 0 && data.total_cost_eur > 0 && (
+            <div className="text-white/40 text-xs mt-1">Jedan smjer ≈ {formatEUR(data.total_cost_eur)}</div>
+          )}
+        </div>
+      )}
+      {data.route_summary && (
+        <div className="mb-3">
+          <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Preporučena ruta</div>
+          <p className="text-white/80 text-sm">{data.route_summary}</p>
+        </div>
+      )}
+      {data.border_crossings && (
+        <div className="mb-3">
+          <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Granični prelazi</div>
+          <p className="text-white/80 text-sm">{data.border_crossings}</p>
+        </div>
+      )}
+      {data.vignettes_required && (
+        <div className="mb-3">
+          <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Vinjete / putarine</div>
+          <p className="text-white/80 text-sm">{data.vignettes_required}</p>
+        </div>
+      )}
+      {data.suggested_stops?.length > 0 && (
+        <div className="mb-3">
+          <div className="text-white/50 text-xs uppercase tracking-wide mb-2">Predložene pauze</div>
+          <ul className="space-y-2">
+            {data.suggested_stops.map((s, i) => (
+              <li key={i} className="bg-ink-900/50 rounded-lg p-3 border border-white/5 text-sm">
+                <div className="font-semibold text-white">{s.name} {s.duration && <span className="text-white/40 font-normal text-xs">• {s.duration}</span>}</div>
+                {s.description && <div className="text-white/60 mt-1">{s.description}</div>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {data.tips && <p className="text-white/70 text-sm pt-3 border-t border-white/5">💡 {data.tips}</p>}
+      <div className="mt-4 pt-4 border-t border-white/5 flex flex-wrap gap-2 no-print">
+        <a href={URLS.googleMaps(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+          🗺️ Otvori rutu na Google Maps →
+        </a>
+      </div>
+    </div>
+  )
+}
+
+function GroundRoutesCard({ data, form, type, totalPeople }) {
+  const emoji = type === 'bus' ? '🚌' : '🚆'
+  const title = type === 'bus' ? 'Autobus' : 'Voz'
+  const searchUrl = type === 'bus' ? URLS.flixbus(form) : URLS.omio(form)
+  const searchName = type === 'bus' ? 'FlixBus' : 'Omio'
+  return (
+    <div className="card">
+      <div className="section-title">{emoji} {title} <span className="text-white/40 text-sm font-normal">({totalPeople} {totalPeople === 1 ? 'putnik' : 'putnika'})</span></div>
+      <ul className="space-y-3">
+        {data.map((r, i) => (
+          <li key={i} className="bg-ink-900/50 rounded-xl p-4 border border-white/5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-semibold text-white">{r.provider || r.company || 'Prevoznik'}</div>
+                <div className="text-white/60 text-sm mt-0.5">{r.departure} → {r.arrival}</div>
+                <div className="text-white/40 text-xs mt-1">
+                  {r.duration ? r.duration : ''}
+                  {r.transfers !== undefined ? ` • ${r.transfers === 0 ? 'direktno' : r.transfers + ' presjedanja'}` : ''}
+                </div>
+                {r.notes && <div className="text-white/60 text-xs mt-1.5">{r.notes}</div>}
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className="text-accent-400 font-bold">{formatEUR(r.price_total_eur)}</div>
+                <div className="text-white/40 text-xs">ukupno za {totalPeople}</div>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-4 pt-4 border-t border-white/5 flex flex-wrap gap-2 no-print">
+        <a href={searchUrl} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+          🔎 Traži na {searchName} →
+        </a>
+      </div>
+    </div>
+  )
+}
+
+function StatBox({ label, value }) {
+  return (
+    <div className="bg-ink-900/50 rounded-xl p-3 border border-white/5">
+      <div className="text-white/50 text-xs uppercase tracking-wide">{label}</div>
+      <div className="text-white font-bold text-base">{value}</div>
+    </div>
+  )
+}
+
+function AlternativeDatesCard({ data, currentDepart, currentReturn }) {
+  return (
+    <div className="card avoid-break">
+      <div className="section-title">📅 Alternativni datumi (±3 dana)</div>
+      <div className="text-white/50 text-sm mb-3">Možda možeš uštedjeti promjenom datuma leta.</div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-white/50 text-left border-b border-white/10">
+              <th className="pb-2 pr-4">Polazak</th>
+              <th className="pb-2 pr-4">Povratak</th>
+              <th className="pb-2 pr-4">Cijena</th>
+              <th className="pb-2">Ušteda</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((d, i) => {
+              const isCurrent = d.depart === currentDepart && d.return === currentReturn
+              return (
+                <tr key={i} className={`border-b border-white/5 last:border-0 ${isCurrent ? 'bg-white/5' : ''}`}>
+                  <td className="py-2 pr-4 text-white">{d.depart} {isCurrent && <span className="text-white/40 text-xs">(trenutno)</span>}</td>
+                  <td className="py-2 pr-4 text-white/80">{d.return}</td>
+                  <td className="py-2 pr-4 text-white font-semibold">{formatEUR(d.price_total_eur)}</td>
+                  <td className="py-2">
+                    {d.savings_eur > 0 ? <span className="text-emerald-400 font-semibold">−{formatEUR(d.savings_eur)}</span> : <span className="text-white/40">—</span>}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function AccommodationCard({ data, options, form, totalPeople }) {
+  const normalized = (Array.isArray(options) ? options : [])
+    .filter(item => item?.name)
+    .slice(0, 6)
+  const primary = data?.name ? data : normalized[0]
+  if (!primary || !primary.name) return null
+
+  const nights = Math.max(1, Math.round((new Date(form.returnDate) - new Date(form.departDate)) / 86400000))
+  const rooms = Math.max(1, Math.ceil(totalPeople / 2))
+  const allOptions = normalized.length > 0 ? normalized : [primary]
+  const priceRange = primary.price_range || allOptions[0]?.price_range || null
+
+  return (
+    <div className="card avoid-break">
+      <div className="section-title">🏠 Smjestaj <span className="text-white/40 text-sm font-normal">(za {totalPeople} {totalPeople === 1 ? 'osobu' : 'osoba'}, {rooms} {rooms === 1 ? 'soba' : 'sobe'}, {nights} {nights === 1 ? 'noc' : 'noci'})</span></div>
+
+      {/* Tipicne cijene za grad */}
+      {priceRange && (
+        <div className="bg-sky-500/10 border border-sky-500/20 rounded-xl p-4 mb-4">
+          <div className="text-sky-300 text-xs uppercase tracking-wide font-semibold mb-2">Tipicne cijene smjestaja u ovom gradu (ukupno za {rooms} soba x {nights} noci)</div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="text-center">
+              <div className="text-white/50 text-xs mb-1">Budzet</div>
+              <div className="text-white font-bold">~{formatEUR(priceRange.budget * rooms * nights)}</div>
+              <div className="text-white/30 text-[10px]">{formatEUR(priceRange.budget)}/soba/noc</div>
+            </div>
+            <div className="text-center border-x border-sky-500/20">
+              <div className="text-sky-300/70 text-xs mb-1">Srednja klasa</div>
+              <div className="text-sky-300 font-bold">~{formatEUR(priceRange.mid * rooms * nights)}</div>
+              <div className="text-white/30 text-[10px]">{formatEUR(priceRange.mid)}/soba/noc</div>
+            </div>
+            <div className="text-center">
+              <div className="text-white/50 text-xs mb-1">Luksuz</div>
+              <div className="text-white font-bold">~{formatEUR(priceRange.luxury * rooms * nights)}</div>
+              <div className="text-white/30 text-[10px]">{formatEUR(priceRange.luxury)}/soba/noc</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Uniformna grid lista svih opcija */}
+      <div className="text-white/50 text-sm mb-3">Opcije blizu atrakcija iz OpenStreetMap podataka — provjeri cijene na Booking.com:</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {allOptions.map((item, index) => {
+          const hasTotal = typeof item.total_price_eur === 'number' && item.total_price_eur > 0
+          const hasNightly = typeof item.price_per_night_eur === 'number' && item.price_per_night_eur > 0
+          const isFirst = index === 0
+          return (
+            <div key={`${item.name}-${index}`} className={`rounded-xl p-4 border flex flex-col ${isFirst ? 'border-accent-500/30 bg-accent-500/5' : 'border-white/5 bg-ink-900/50'}`}>
+              {isFirst && <div className="text-accent-400 text-[10px] font-bold uppercase tracking-wide mb-1">Preporuceno</div>}
+              <div className="font-semibold text-white">{item.name}</div>
+              <div className="text-white/60 text-sm mt-0.5">{item.area || item.address}</div>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {item.rating ? <span className="chip">⭐ {item.rating}</span> : null}
+                {item.beds ? <span className="chip">🛏️ {item.beds} kreveta</span> : null}
+                {item.distance_to_center_km != null ? <span className="chip">📏 {item.distance_to_center_km} km</span> : null}
+              </div>
+              <div className="mt-3 flex-grow">
+                {hasTotal ? (
+                  <>
+                    <div className="text-accent-400 font-bold">{formatEUR(item.total_price_eur)}</div>
+                    <div className="text-white/40 text-xs">{hasNightly ? formatEUR(item.price_per_night_eur) + '/noc · ' : ''}{nights} noci</div>
+                  </>
+                ) : hasNightly ? (
+                  <>
+                    <div className="text-accent-400 font-bold">{formatEUR(item.price_per_night_eur * rooms * nights)}</div>
+                    <div className="text-white/40 text-xs">{formatEUR(item.price_per_night_eur)}/soba/noc · {rooms} soba · {nights} noci</div>
+                  </>
+                ) : (
+                  <a href={`https://www.booking.com/searchresults.html?ss=${encodeURIComponent(item.name + ' ' + (item.area || ''))}&checkin=${form.departDate}&checkout=${form.returnDate}&group_adults=${form.adults}&group_children=${form.children}&no_rooms=${rooms}`}
+                    target="_blank" rel="noreferrer"
+                    className="text-accent-400 hover:text-accent-300 text-sm font-semibold transition-colors">
+                    Provjeri cijenu na Booking →
+                  </a>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="mt-4 pt-4 border-t border-white/5 flex flex-wrap gap-2 no-print">
+        <a href={URLS.booking(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+          🏨 Booking.com →
+        </a>
+        <a href={URLS.airbnb(form)} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+          🏡 Airbnb →
+        </a>
+        <a href={`https://www.hotels.com/Hotel-Search?${new URLSearchParams({ destination: form.destination, 'date-picker-start': form.departDate, 'date-picker-end': form.returnDate, adults: String(form.adults) })}`}
+          target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+          🛎️ Hotels.com →
+        </a>
+      </div>
+    </div>
+  )
+}
+
+  return (
+    <div className="card avoid-break">
+      <div className="section-title">🏠 Smještaj <span className="text-white/40 text-sm font-normal">(za {totalPeople} {totalPeople === 1 ? 'osobu' : 'osoba'})</span></div>
+      {normalized.length > 1 && (
+        <div className="text-white/50 text-sm mb-3">Prikazane su opcije po blizini atrakcija — provjeri live cijene na Booking.com ili Airbnb.</div>
+      )}
+
+      {/* City price range banner when no live prices */}
+      {!hasTotal && !hasNightly && priceRange && (
+        <div className="bg-sky-500/10 border border-sky-500/20 rounded-xl p-4 mb-4">
+          <div className="text-sky-300 text-xs uppercase tracking-wide font-semibold mb-2">Tipične cijene smještaja u ovom gradu (po sobi/noć)</div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="text-center">
+              <div className="text-white/50 text-xs mb-1">Budžet</div>
+              <div className="text-white font-bold">~{formatEUR(priceRange.budget)}</div>
+            </div>
+            <div className="text-center border-x border-sky-500/20">
+              <div className="text-sky-300/70 text-xs mb-1">Srednja klasa</div>
+              <div className="text-sky-300 font-bold">~{formatEUR(priceRange.mid)}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-white/50 text-xs mb-1">Luksuz</div>
+              <div className="text-white font-bold">~{formatEUR(priceRange.luxury)}</div>
+            </div>
+          </div>
+          <div className="text-white/40 text-xs mt-2">Za {nights} {nights === 1 ? 'noć' : 'noći'}: budžet ~{formatEUR(priceRange.budget * nights)}, srednja klasa ~{formatEUR(priceRange.mid * nights)}</div>
+        </div>
+      )}
+
+      <div className="bg-ink-900/50 rounded-xl p-4 border border-white/5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-semibold text-white">{primary.name}</div>
+            <div className="text-white/60 text-sm mt-1">{primary.area || primary.address}</div>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {primary.rating ? <span className="chip">⭐ {primary.rating}</span> : null}
+              {primary.beds ? <span className="chip">🛏️ {primary.beds} kreveta</span> : null}
+              {primary.distance_to_center_km !== undefined && primary.distance_to_center_km !== null ? <span className="chip">📏 {primary.distance_to_center_km} km od centra</span> : null}
+            </div>
+          </div>
+          <div className="text-right flex-shrink-0">
+            {hasTotal ? (
+              <>
+                <div className="text-accent-400 font-bold">{formatEUR(primary.total_price_eur)}</div>
+                {hasNightly && <div className="text-white/40 text-xs">{formatEUR(primary.price_per_night_eur)} / noć</div>}
+                <div className="text-white/40 text-xs">{nights} {nights === 1 ? 'noć' : 'noći'}</div>
+              </>
+            ) : hasNightly ? (
+              <>
+                <div className="text-accent-400 font-bold">{formatEUR(primary.price_per_night_eur)}</div>
+                <div className="text-white/40 text-xs">po noći</div>
+                <div className="text-white/40 text-xs">≈ {formatEUR(primary.price_per_night_eur * nights)} ukupno</div>
+              </>
+            ) : (
+              <>
+                <div className="text-white/50 text-sm font-medium">Live cijena</div>
+                <div className="text-white/30 text-xs">provjeri na Booking</div>
+              </>
+            )}
+          </div>
+        </div>
+        {primary.why && <p className="text-white/70 text-sm mt-3">{primary.why}</p>}
+      </div>
+
+      {alternatives.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-4">
+          {alternatives.map((item, index) => {
+            const itemHasTotal = typeof item.total_price_eur === 'number' && Number.isFinite(item.total_price_eur) && item.total_price_eur > 0
+            const itemHasNightly = typeof item.price_per_night_eur === 'number' && Number.isFinite(item.price_per_night_eur) && item.price_per_night_eur > 0
+            return (
+              <div key={`${item.name}-${item.address || index}`} className="bg-ink-900/50 rounded-xl p-4 border border-white/5">
+                <div className="font-semibold text-white">{item.name}</div>
+                <div className="text-white/60 text-sm mt-1">{item.area || item.address}</div>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {item.rating ? <span className="chip">⭐ {item.rating}</span> : null}
+                  {item.distance_to_center_km !== undefined && item.distance_to_center_km !== null ? <span className="chip">📏 {item.distance_to_center_km} km</span> : null}
+                </div>
+                <div className="mt-3">
+                  {itemHasTotal ? (
+                    <>
+                      <div className="text-accent-400 font-bold">{formatEUR(item.total_price_eur)}</div>
+                      <div className="text-white/40 text-xs">ukupno • {formatEUR(item.total_price_eur / nights)}/noć</div>
+                    </>
+                  ) : itemHasNightly ? (
+                    <>
+                      <div className="text-accent-400 font-bold">{formatEUR(item.price_per_night_eur)}</div>
+                      <div className="text-white/40 text-xs">po noći • ≈{formatEUR(item.price_per_night_eur * nights)} ukupno</div>
+                    </>
+                  ) : (
+                    <a href={`https://www.booking.com/searchresults.html?${new URLSearchParams({ ss: item.name, checkin: form.departDate, checkout: form.returnDate, group_adults: String(form.adults), group_children: String(form.children) })}`}
+                      target="_blank" rel="noreferrer"
+                      className="text-accent-400 hover:text-accent-300 text-sm font-semibold transition-colors">
+                      Provjeri cijenu →
+                    </a>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <div className="mt-4 pt-4 border-t border-white/5 flex flex-wrap gap-2 no-print">
+        <a href={URLS.booking(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+          🏨 Booking.com →
+        </a>
+        <a href={URLS.airbnb(form)} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+          🏡 Airbnb →
+        </a>
+        <a href={`https://www.hotels.com/Hotel-Search?${new URLSearchParams({ destination: form.destination, 'date-picker-start': form.departDate, 'date-picker-end': form.returnDate, adults: String(form.adults) })}`}
+          target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+          🛎️ Hotels.com →
+        </a>
+      </div>
+    </div>
+  )
+}
+
+function AttractionsCard({ data, form }) {
+  if (!data || !data.length) return null
+  const withPrice = data.filter(a => a.free || (typeof a.price_eur === 'number' && Number.isFinite(a.price_eur))).length
+  return (
+    <div className="card">
+      <div className="section-title">🎯 Must See — top {data.length}</div>
+      {withPrice > 0 && (
+        <div className="text-white/50 text-sm mb-4">
+          Cijene su okvirne (odrasli). Uvijek provjeri najnovije cijene na zvaničnom sajtu atrakcije.
+        </div>
+      )}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {data.map((a, i) => {
+          const isFree = a.free || a.price_eur === 0
+          const hasPrice = typeof a.price_eur === 'number' && Number.isFinite(a.price_eur) && a.price_eur > 0
+          return (
+            <div key={i} className="bg-ink-900/50 rounded-xl p-4 border border-white/5 flex flex-col">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="font-semibold text-white leading-tight">{i + 1}. {a.name}</div>
+                {isFree ? (
+                  <span className="flex-shrink-0 bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-xs font-bold px-2 py-0.5 rounded-full">BESPLATNO</span>
+                ) : hasPrice ? (
+                  <span className="flex-shrink-0 bg-accent-500/20 border border-accent-500/30 text-accent-400 text-xs font-bold px-2 py-0.5 rounded-full">~€{a.price_eur}</span>
+                ) : (
+                  <span className="flex-shrink-0 bg-white/5 border border-white/10 text-white/40 text-xs px-2 py-0.5 rounded-full">cijena n/a</span>
+                )}
+              </div>
+              {a.description && <p className="text-white/60 text-sm flex-grow">{a.description}</p>}
+              <div className="flex flex-wrap gap-2 mt-2">
+                {a.area && <span className="chip text-xs">📍 {a.area}</span>}
+                {a.duration_hours ? <span className="chip text-xs">⏱️ {a.duration_hours}h</span> : null}
+              </div>
+              {a.price_note && (
+                <div className={`text-xs mt-2 ${isFree ? 'text-emerald-400/70' : hasPrice ? 'text-accent-400/70' : 'text-white/35'}`}>
+                  {a.price_note}
+                </div>
+              )}
+              <a href={URLS.placeSearch(a.name, form.destination)} target="_blank" rel="noreferrer" className="text-sky-400 hover:text-sky-300 text-xs mt-2 inline-block no-print">
+                🗺️ Otvori na mapi →
+              </a>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function ItineraryCard({ data, attractions }) {
+  if (!data || !data.length) return null
+  return (
+    <div className="card">
+      <div className="section-title">📆 Dan-po-dan itinerarij</div>
+      <div className="text-white/50 text-sm mb-4">Atrakcije grupisane geografski da izbjegnete nepotrebno hodanje/vožnju.</div>
+      <div className="space-y-4">
+        {data.map((day, i) => (
+          <div key={i} className="bg-ink-900/50 rounded-xl p-4 border border-white/5 avoid-break">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="bg-accent-500 text-white font-bold text-sm rounded-lg w-8 h-8 flex items-center justify-center">{day.day}</span>
+                  <span className="font-bold text-white text-lg">{day.title}</span>
+                </div>
+                <div className="text-white/50 text-xs mt-1">{day.date} {day.area ? `• ${day.area}` : ''}</div>
+              </div>
+              {day.walking_minutes ? <span className="chip text-xs">🚶 ~{day.walking_minutes} min između stopova</span> : null}
+            </div>
+            {day.attraction_indices?.length > 0 && attractions && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {day.attraction_indices.map(idx => {
+                  const a = attractions[idx]
+                  if (!a) return null
+                  return (
+                    <span key={idx} className="bg-accent-500/20 border border-accent-500/40 text-accent-400 rounded-lg px-2.5 py-1 text-xs font-medium">
+                      {idx + 1}. {a.name}
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+            <div className="space-y-2 text-sm">
+              {day.morning && <TimeRow label="Jutro" text={day.morning} />}
+              {day.afternoon && <TimeRow label="Popodne" text={day.afternoon} />}
+              {day.evening && <TimeRow label="Veče" text={day.evening} />}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function TimeRow({ label, text }) {
+  return (
+    <div className="flex gap-3">
+      <span className="text-white/40 text-xs uppercase tracking-wide w-16 flex-shrink-0 pt-0.5">{label}</span>
+      <span className="text-white/80 flex-grow">{text}</span>
+    </div>
+  )
+}
+
+function TransitCard({ data }) {
+  if (!data) return null
+  const hasAnyPrice = data.single_eur || data.daily_eur || data.weekly_eur
+  return (
+    <div className="card">
+      <div className="section-title">🚆 Javni prevoz u gradu</div>
+
+      {/* Mode badges */}
+      {data.modes?.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {data.modes.map(m => {
+            const icons = { metro: '🚇', tramvaj: '🚋', autobus: '🚌', 'gradska željeznica': '🚆', bus: '🚌' }
+            return (
+              <span key={m} className="bg-sky-500/20 border border-sky-500/30 text-sky-300 text-xs font-semibold px-3 py-1 rounded-full">
+                {icons[m] || '🚌'} {m.charAt(0).toUpperCase() + m.slice(1)}
+              </span>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Price table */}
+      {hasAnyPrice && (
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {data.single_eur !== null && data.single_eur !== undefined && (
+            <div className="bg-ink-900/50 rounded-xl p-3 border border-white/5 text-center">
+              <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Jedna vožnja</div>
+              <div className="text-white font-bold text-lg">{formatEUR(data.single_eur)}</div>
+            </div>
+          )}
+          {data.daily_eur !== null && data.daily_eur !== undefined && (
+            <div className="bg-accent-500/15 rounded-xl p-3 border border-accent-500/30 text-center">
+              <div className="text-accent-400/80 text-xs uppercase tracking-wide mb-1">Dnevna karta</div>
+              <div className="text-accent-400 font-bold text-lg">{formatEUR(data.daily_eur)}</div>
+            </div>
+          )}
+          {data.weekly_eur !== null && data.weekly_eur !== undefined && (
+            <div className="bg-emerald-500/10 rounded-xl p-3 border border-emerald-500/20 text-center">
+              <div className="text-emerald-400/80 text-xs uppercase tracking-wide mb-1">Sedmična karta</div>
+              <div className="text-emerald-400 font-bold text-lg">{formatEUR(data.weekly_eur)}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Info rows */}
+      <div className="space-y-2 text-sm">
+        {data.note && (
+          <div className="flex items-start gap-2 text-white/70">
+            <span className="text-white/40 flex-shrink-0">🎫</span>
+            <span>{data.note}</span>
+          </div>
+        )}
+        {data.tourist_pass && (
+          <div className="flex items-start gap-2 text-white/70">
+            <span className="text-white/40 flex-shrink-0">🗺️</span>
+            <span>Turistička karta: <span className="text-white/90 font-medium">{data.tourist_pass}</span></span>
+          </div>
+        )}
+        {data.tips && (
+          <div className="flex items-start gap-2 text-white/70">
+            <span className="text-accent-400 flex-shrink-0">💡</span>
+            <span>{data.tips}</span>
+          </div>
+        )}
+        {!hasAnyPrice && data.recommendation && (
+          <p className="text-white/70">{data.recommendation}</p>
+        )}
+      </div>
+
+      {/* Website link */}
+      {data.website && (
+        <div className="mt-4 pt-4 border-t border-white/5 no-print">
+          <a href={data.website} target="_blank" rel="noreferrer"
+            className="bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-sm font-semibold rounded-lg px-4 py-2 transition-colors inline-flex items-center gap-2">
+            🌐 Zvanični sajt prevoza →
+          </a>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function WeatherCard({ data }) {
+  if (!data) return null
+  return (
+    <div className="card">
+      <div className="section-title">🌤️ Vrijeme i garderoba {data.source && <span className="chip text-[10px]">{data.source}</span>}</div>
+      <div className="flex items-baseline gap-4 mb-3">
+        <div className="text-3xl font-bold text-white">{data.min_temp_c}° – {data.max_temp_c}°C</div>
+        {data.rain_probability && <div className="text-white/60 text-sm">💧 {data.rain_probability}</div>}
+      </div>
+      {data.forecast_summary && <p className="text-white/70 text-sm">{data.forecast_summary}</p>}
+      {data.clothing_recommendation && (
+        <div className="mt-3 pt-3 border-t border-white/5">
+          <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Preporuka garderobe</div>
+          <p className="text-white/80 text-sm">{data.clothing_recommendation}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FoodCard({ data, form }) {
+  if (!data || !data.length) return null
+  const groups = { market: [], fast_food: [], restaurant: [] }
+  data.forEach(f => { (groups[f.type] || groups.restaurant).push(f) })
+  const labels = { market: '🛒 Marketi', fast_food: '🍔 Fast food', restaurant: '🍽️ Restorani' }
+  return (
+    <div className="card">
+      <div className="section-title">🍴 Jelo u blizini smještaja <span className="text-white/40 text-sm font-normal">(lokalno)</span></div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {Object.entries(groups).map(([k, arr]) => arr.length > 0 && (
+          <div key={k}>
+            <div className="text-white/70 font-semibold text-sm mb-2">{labels[k]}</div>
+            <ul className="space-y-2">
+              {arr.map((f, i) => (
+                <li key={i} className="bg-ink-900/50 rounded-lg p-3 border border-white/5 text-sm">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-white font-medium">{f.name}</span>
+                    {typeof f.avg_price_eur === 'number' && f.avg_price_eur > 0 && (
+                      <span className="text-accent-400 font-semibold">{formatEUR(f.avg_price_eur)}</span>
+                    )}
+                  </div>
+                  {f.distance_m !== undefined && f.distance_m !== null && f.distance_m > 0 && <div className="text-white/40 text-xs mt-0.5">{f.distance_m} m</div>}
+                  {f.note && <div className="text-white/60 text-xs mt-1">{f.note}</div>}
+                  <a href={URLS.placeSearch(f.name, form.destination, f.lat, f.lng)} target="_blank" rel="noreferrer" className="text-sky-400 hover:text-sky-300 text-xs mt-1 inline-block no-print">
+                    🗺️ Na mapi →
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ChainRestaurantsCard({ data, form }) {
+  if (!data || !data.length) return null
+  // Filtriraj samo stvarne validne objekte sa imenom
+  const valid = data.filter(c => c.name && c.name.trim())
+  if (!valid.length) return null
+
+  const chainEmojis = {
+    "McDonald's": '🍟',
+    'KFC': '🍗',
+    'Burger King': '🍔',
+    'Subway': '🥪',
+    'Starbucks': '☕',
+    'Pizza Hut': '🍕',
+    "Domino's": '🍕',
+    'Taco Bell': '🌮',
+  }
+
+  return (
+    <div className="card">
+      <div className="section-title">🌍 Globalni lanci restorana <span className="text-white/40 text-sm font-normal">(poznati brendovi)</span></div>
+      <div className="text-white/50 text-sm mb-3">Brza i predvidljiva hrana — korisno kad djeca žele nešto poznato.</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {valid.map((c, i) => {
+          const emoji = chainEmojis[c.name] || '🍴'
+          const officialUrl = URLS.chainOfficial[c.name]
+          const mapUrl = URLS.placeSearch(c.name, form.destination, c.lat, c.lng)
+          return (
+            <div key={i} className="bg-ink-900/50 rounded-xl p-4 border border-white/5 flex flex-col">
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-semibold text-white leading-tight flex items-center gap-2">
+                  <span className="text-xl">{emoji}</span>
+                  {c.name}
+                </div>
+                {c.avg_price_eur !== undefined && c.avg_price_eur > 0 && (
+                  <div className="text-accent-400 font-semibold text-sm">
+                    ~{formatEUR(c.avg_price_eur)}
+                    <div className="text-white/40 text-[10px] font-normal">meni</div>
+                  </div>
+                )}
+              </div>
+              {c.menu_highlights && <div className="text-white/70 text-xs mt-2">{c.menu_highlights}</div>}
+              {c.distance_m !== undefined && c.distance_m > 0 && (
+                <div className="text-white/40 text-xs mt-2">📍 ~{c.distance_m} m od centra/smještaja</div>
+              )}
+              {c.note && <div className="text-white/60 text-xs mt-1 italic">{c.note}</div>}
+              <div className="flex flex-wrap gap-2 mt-3 pt-2 border-t border-white/5 no-print">
+                <a href={mapUrl} target="_blank" rel="noreferrer" className="text-sky-400 hover:text-sky-300 text-xs">
+                  🗺️ Lokacije na mapi
+                </a>
+                {officialUrl && (
+                  <a href={officialUrl} target="_blank" rel="noreferrer" className="text-sky-400 hover:text-sky-300 text-xs">
+                    🔗 Zvanični meni
+                  </a>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-3 text-xs text-white/40 italic no-print">
+        ℹ️ Ovdje su prikazane stvarne lokacije lanaca iz javnih OSM podataka. Cijene i meni provjeri direktno na zvaničnoj stranici lanca.
+      </div>
+    </div>
+  )
+}
+
+function VisaCard({ data }) {
+  if (!data) return null
+  const isRequired = data.visa_required === true
+  const isNotRequired = data.visa_required === false
+  const isUnknown = !isRequired && !isNotRequired
+
+  return (
+    <div className="card avoid-break">
+      <div className="section-title">🛂 Viza — BiH pasoš</div>
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        {isRequired && <span className="bg-red-500/20 border border-red-500/40 text-red-300 rounded-lg px-2.5 py-1 text-sm font-semibold">⚠️ Viza potrebna</span>}
+        {isNotRequired && <span className="bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 rounded-lg px-2.5 py-1 text-sm font-semibold">✓ Bez vize</span>}
+        {isUnknown && <span className="bg-amber-500/20 border border-amber-500/40 text-amber-200 rounded-lg px-2.5 py-1 text-sm font-semibold">❓ Provjeri vizne zahtjeve</span>}
+        {data.visa_type && <span className="text-white/70 text-sm">{data.visa_type}</span>}
+      </div>
+      {isUnknown && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 mb-3 text-amber-200 text-sm">
+          Vizni režim nije potvrđen iz javnog zvaničnog API izvora. <strong>OBAVEZNO provjeri</strong> prije putovanja.
+        </div>
+      )}
+      <div className="space-y-1.5 text-sm">
+        {data.max_stay_days ? <Row label="Max boravak" value={`${data.max_stay_days} dana`} /> : null}
+        {data.passport_validity_required_months ? <Row label="Važenje pasoša" value={`min. ${data.passport_validity_required_months} mjeseci`} /> : null}
+        {data.processing_time && <Row label="Vrijeme obrade" value={data.processing_time} />}
+      </div>
+      {data.documents_needed?.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-white/5">
+          <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Potrebni dokumenti</div>
+          <div className="flex flex-wrap gap-1.5">
+            {data.documents_needed.map((d, i) => <span key={i} className="chip text-xs">{d}</span>)}
+          </div>
+        </div>
+      )}
+      {data.notes && <p className="text-white/70 text-sm mt-3 pt-3 border-t border-white/5">⚠️ {data.notes}</p>}
+      {data.official_url && (
+        <a href={data.official_url} target="_blank" rel="noreferrer" className="text-sky-400 hover:text-sky-300 text-xs mt-2 inline-block no-print">
+          Provjeri zvanični izvor →
+        </a>
+      )}
+    </div>
+  )
+}
+
+function EmergencyCard({ data }) {
+  if (!data) return null
+  const emb = data.bih_embassy
+  const hasEmbassy = emb && (emb.address || emb.phone || emb.email || emb.notes)
+  return (
+    <div className="card avoid-break">
+      <div className="section-title">🚨 Hitni brojevi & ambasada BiH</div>
+      <div className="space-y-1.5 text-sm mb-4">
+        {data.general_emergency && <Row label="Opća pomoć" value={data.general_emergency} />}
+        {data.police && <Row label="Policija" value={data.police} />}
+        {data.ambulance && <Row label="Hitna pomoć" value={data.ambulance} />}
+        {data.fire && <Row label="Vatrogasci" value={data.fire} />}
+      </div>
+      {hasEmbassy && (
+        <div className="pt-3 border-t border-white/5">
+          <div className="text-white/50 text-xs uppercase tracking-wide mb-2">Ambasada BiH {emb.city ? `• ${emb.city}` : ''}</div>
+          <div className="space-y-1 text-sm">
+            {emb.address && <div className="text-white/80">📍 {emb.address}</div>}
+            {emb.phone && <div className="text-white/80">📞 {emb.phone}</div>}
+            {emb.email && <div className="text-white/80">✉️ {emb.email}</div>}
+            {emb.notes && <div className="text-white/60 text-xs italic mt-1">{emb.notes}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BudgetCard({ data, notes, totalPeople, plan, form }) {
+  const nights = form ? Math.max(1, Math.round((new Date(form.returnDate) - new Date(form.departDate)) / 86400000)) : 1
+  const rooms = Math.max(1, Math.ceil(totalPeople / 2))
+
+  // Sagradi listu stavki: live cijene + procjene
+  const items = []
+  const missingNotes = []
+
+  // Prevoz - live
+  if (data?.Prevoz > 0) {
+    items.push({ label: 'Prevoz', value: data.Prevoz, exact: true })
+  } else {
+    missingNotes.push('Prevoz: nije dostupna live cijena — pretrazuj na flight search linkovima iznad.')
+  }
+
+  // Smjestaj - live ili procjena
+  if (data?.Smjestaj > 0 || data?.Smještaj > 0) {
+    items.push({ label: 'Smjestaj', value: data.Smjestaj || data.Smještaj, exact: true })
+  } else {
+    const range = plan?.accommodation?.price_range || plan?.accommodation_options?.[0]?.price_range
+    if (range?.mid) {
+      const est = Math.round(range.mid * rooms * nights)
+      items.push({ label: 'Smjestaj (procjena)', value: est, exact: false, hint: `~${range.mid} EUR/soba/noc x ${rooms} soba x ${nights} noci` })
+    } else {
+      missingNotes.push('Smjestaj: nema live cijene — dodano iz okvirnih cijena u sekciji smjestaja.')
+    }
+  }
+
+  // Atrakcije
+  if (data?.Atrakcije > 0) {
+    items.push({ label: 'Atrakcije', value: data.Atrakcije, exact: true })
+  } else {
+    missingNotes.push('Atrakcije: nema javnih cijena u OSM podacima za ovu destinaciju.')
+  }
+
+  // Javni prevoz - procjena
+  const transit = plan?.transit
+  if (transit?.daily_eur || transit?.weekly_eur) {
+    const weeks = Math.floor(nights / 7)
+    const remDays = nights % 7
+    let transitTotal = 0
+    if (transit.weekly_eur && weeks > 0) transitTotal += transit.weekly_eur * weeks * totalPeople
+    if (transit.daily_eur && remDays > 0) transitTotal += transit.daily_eur * remDays * totalPeople
+    if (transitTotal > 0) {
+      items.push({ label: 'Javni prevoz (procjena)', value: Math.round(transitTotal), exact: false, hint: `dnevna ${transit.daily_eur ? transit.daily_eur + ' EUR' : '-'}, sedmicna ${transit.weekly_eur ? transit.weekly_eur + ' EUR' : '-'} x ${totalPeople} osoba` })
+    }
+  }
+
+  const exactTotal = items.filter(i => i.exact).reduce((s, i) => s + i.value, 0)
+  const estimatedTotal = items.reduce((s, i) => s + i.value, 0)
+
+  if (!items.length) return null
+
+  return (
+    <div className="card avoid-break">
+      <div className="section-title">💰 Okvirni budzet <span className="text-white/40 text-sm font-normal">(za {totalPeople} {totalPeople === 1 ? 'osobu' : 'osoba'}, {nights} {nights === 1 ? 'noc' : 'noci'})</span></div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        {items.map((item) => (
+          <div key={item.label} className={`rounded-xl p-3 border ${item.exact ? 'bg-ink-900/50 border-white/5' : 'bg-amber-500/5 border-amber-500/20'}`}>
+            <div className="text-white/50 text-xs uppercase tracking-wide">{item.label}</div>
+            <div className={`font-bold text-lg ${item.exact ? 'text-white' : 'text-amber-300'}`}>
+              {item.exact ? '' : '~'}{new Intl.NumberFormat('bs-BA', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(item.value)}
+            </div>
+            {item.hint && <div className="text-white/30 text-[10px] mt-0.5 leading-tight">{item.hint}</div>}
+          </div>
+        ))}
+
+        {/* UKUPNO */}
+        <div className="rounded-xl p-3 border bg-accent-500/20 border-accent-500/40">
+          <div className="text-white/50 text-xs uppercase tracking-wide">Ukupno</div>
+          <div className="text-accent-400 font-bold text-lg">
+            ~{new Intl.NumberFormat('bs-BA', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(estimatedTotal)}
+          </div>
+          {exactTotal !== estimatedTotal && (
+            <div className="text-white/30 text-[10px] mt-0.5">live: {new Intl.NumberFormat('bs-BA', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(exactTotal)}</div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-amber-500/5 border border-amber-500/15 rounded-xl p-3 mb-3 text-xs text-amber-200/70">
+        <span className="font-semibold text-amber-300">Legenda:</span> bijele cijene = live/provjerene, <span className="text-amber-300">narancaste</span> = procjene na osnovu tipicnih cijena za grad.
+      </div>
+
+      {missingNotes.length > 0 && (
+        <div className="mt-2 pt-3 border-t border-white/5">
+          <div className="text-white/40 text-xs uppercase tracking-wide mb-1.5">Nije ukljuceno u budzet</div>
+          <ul className="space-y-1 text-xs text-white/50">
+            {missingNotes.map((n, i) => <li key={i} className="flex gap-1.5"><span>•</span><span>{n}</span></li>)}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TipsCard({ data }) {
+  if (!data || !data.length) return null
+  const filled = data.filter(t => t && t.trim())
+  if (!filled.length) return null
+  return (
+    <div className="card avoid-break">
+      <div className="section-title">💡 Savjeti</div>
+      <ul className="space-y-2 text-sm text-white/80">
+        {filled.map((t, i) => <li key={i} className="flex gap-2"><span className="text-accent-400">•</span><span>{t}</span></li>)}
+      </ul>
+    </div>
+  )
+}
+
+function Row({ label, value }) {
+  return (
+    <div className="flex justify-between items-center py-1.5 border-b border-white/5 last:border-0">
+      <span className="text-white/70">{label}</span>
+      <span className="text-white font-semibold">{value}</span>
+    </div>
+  )
+}
+
+function Footer({ onAbout }) {
+  return (
+    <footer className="max-w-6xl mx-auto px-4 sm:px-6 py-8 text-center text-white/30 text-xs no-print">
+      Podaci dolaze iz javnih web/API izvora. Ako neka kategorija nema slobodan live izvor, aplikacija je ne popunjava izmišljenim podacima. Mapa © OpenStreetMap.
+      {' • '}
+      <button onClick={onAbout} className="underline hover:text-white/60">O aplikaciji</button>
+    </footer>
+  )
+}
+
+function AboutModal({ onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm no-print p-4" onClick={onClose}>
+      <div className="bg-ink-800 border border-white/10 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 bg-ink-800 border-b border-white/10 px-6 py-4 flex items-center justify-between">
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent-400 to-accent-500 flex items-center justify-center">
+              <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4 text-white"><path d="M2 12l20-9-9 20-2-9-9-2z" fill="currentColor"/></svg>
+            </span>
+            O aplikaciji
+          </h2>
+          <button onClick={onClose} aria-label="Zatvori" className="text-white/40 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10">×</button>
+        </div>
+
+        <div className="px-6 py-5 space-y-5 text-white/80">
+          <p className="text-white/90">
+            <span className="font-semibold text-white">Putni Planer</span> pravi kompletan plan putovanja u jednom kliku i pokušava ga napuniti stvarnim javno dostupnim podacima, bez placeholder cijena.
+          </p>
+
+          <div>
+            <h3 className="text-white font-semibold mb-2">Glavne funkcionalnosti</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+              <FeatureItem emoji="📍" text="Automatska detekcija polazne lokacije" />
+              <FeatureItem emoji="🧭" text="Prevoz: avion, auto, autobus, voz" />
+              <FeatureItem emoji="📅" text="Alternativni datumi ±3 dana" />
+              <FeatureItem emoji="🏠" text="Apartman blizu atrakcija" />
+              <FeatureItem emoji="🎯" text="15 must-see atrakcija" />
+              <FeatureItem emoji="📆" text="Dan-po-dan itinerarij" />
+              <FeatureItem emoji="🗺️" text="Interaktivna mapa" />
+              <FeatureItem emoji="🚆" text="Javni prevoz u gradu" />
+              <FeatureItem emoji="🌤️" text="Prognoza + garderoba" />
+              <FeatureItem emoji="🍴" text="Lokalna hrana" />
+              <FeatureItem emoji="🌍" text="Globalni lanci (McDonald's, KFC...)" />
+              <FeatureItem emoji="🛂" text="Viza za BiH pasoš" />
+              <FeatureItem emoji="🚨" text="Hitni + ambasada BiH" />
+              <FeatureItem emoji="💰" text="Budžet" />
+              <FeatureItem emoji="📄" text="Export u PDF" />
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-white font-semibold mb-2">Kako radi</h3>
+            <ol className="space-y-2 text-sm list-decimal list-inside marker:text-accent-400 marker:font-bold">
+              <li>Unesi polazak (ili dozvoli auto-detekciju), destinaciju, datume, putnike i prevoz</li>
+              <li>Backend povlači geolokaciju, POI i rute iz javnih API izvora</li>
+              <li>Vrijeme dolazi iz Open-Meteo / vremenskog API-ja, lokacije iz OpenStreetMap ekosistema</li>
+              <li>Ako za neku kategoriju ne postoji slobodan live izvor, aplikacija tu stavku ne izmišlja</li>
+              <li>OpenStreetMap služi za mapu, reverse geocoding i većinu tačaka interesa</li>
+              <li>Export u PDF, share-uj ili print</li>
+            </ol>
+          </div>
+
+          <div>
+            <h3 className="text-white font-semibold mb-2">Tehnologija</h3>
+            <div className="flex flex-wrap gap-1.5 text-xs">
+              <span className="chip">React + Vite</span>
+              <span className="chip">Tailwind</span>
+              <span className="chip">Cloudflare Pages</span>
+              <span className="chip">Open-Meteo</span>
+              <span className="chip">OpenStreetMap / Overpass</span>
+              <span className="chip">OSRM</span>
+              <span className="chip">Amadeus</span>
+              <span className="chip">RestCountries</span>
+            </div>
+          </div>
+
+          <div className="bg-ink-900/50 rounded-xl p-4 border border-white/5 text-sm">
+            <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Privatnost</div>
+            <p className="text-white/70">
+              Aplikacija ne čuva tvoje podatke. Lokacija se koristi samo lokalno u browseru za popunjavanje polja "Polazak" (sprema se u localStorage tvog browsera). Upiti se šalju samo javnim servisima potrebnim za geokodiranje, rute i lokacije.
+            </p>
+          </div>
+        </div>
+
+        <div className="sticky bottom-0 bg-ink-800 border-t border-white/10 px-6 py-3 flex justify-end">
+          <button onClick={onClose} className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">Zatvori</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function FeatureItem({ emoji, text }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="flex-shrink-0">{emoji}</span>
+      <span>{text}</span>
+    </div>
+  )
+}
