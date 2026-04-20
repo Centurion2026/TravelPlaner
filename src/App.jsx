@@ -299,6 +299,9 @@ export default function App() {
 
   // Holidays state (fetched after plan loads)
   const [holidays, setHolidays] = useState(null)
+
+  // Auto-clear childrenAges kad children=0
+  useEffect(() => {
     if (form.children === 0 && form.childrenAges !== '') {
       setForm(f => ({ ...f, childrenAges: '' }))
     }
