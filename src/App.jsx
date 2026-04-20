@@ -205,6 +205,11 @@ export default function App() {
       if (!data.suggestions?.length) throw new Error('Backend vratio prazan niz. Groq odgovor: ' + (data.debug || 'nepoznato'))
       setExploreSuggestions(data.suggestions)
       if (data.groq_limits) setGroqLimits(data.groq_limits)
+      // Show source info
+      if (data.source === 'live_prices') {
+        setExploreError(null)
+        setExploreSuggestions(prev => prev ? prev.map(s => ({ ...s, _source: 'live' })) : prev)
+      }
     } catch (err) {
       setExploreError(err.message || 'Nije moguce dohvatiti prijedloge. Pokusaj ponovo.')
     } finally {
@@ -556,7 +561,17 @@ function ExploreSuggestions({ data, form, onPick, onClose }) {
       <div className="flex items-center justify-between mb-4">
         <div>
           <div className="section-title mb-0">🌍 Gdje da idem? <span className="text-violet-400 text-base font-normal">— AI preporuke</span></div>
-          <div className="text-white/50 text-sm mt-1">Polazak: <span className="text-white/70">{origin}</span> · {form.departDate} · avion</div>
+          <div className="text-white/50 text-sm mt-1">
+            Polazak: <span className="text-white/70">{origin}</span> · {form.departDate} · avion
+            {data[0]?.live_prices && (
+              <span className="ml-2 bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                ✓ LIVE CIJENE
+              </span>
+            )}
+            {data[0]?.live_prices === false && (
+              <span className="ml-2 text-white/30 text-[10px]">(AI procjene cijena)</span>
+            )}
+          </div>
         </div>
         <button onClick={onClose} className="text-white/30 hover:text-white/70 text-2xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors">×</button>
       </div>
@@ -596,7 +611,9 @@ function ExploreSuggestions({ data, form, onPick, onClose }) {
             {/* Stats */}
             <div className="grid grid-cols-2 gap-2">
               <div className="bg-white/5 rounded-lg p-2 text-center">
-                <div className="text-white/40 text-[10px] uppercase tracking-wide">Let (povratno)</div>
+                <div className="text-white/40 text-[10px] uppercase tracking-wide">
+                  Let {s.live_prices ? <span className="text-emerald-400">● LIVE</span> : '(procjena)'}
+                </div>
                 <div className="text-accent-400 font-bold text-sm">~€{s.estimated_flight_eur}</div>
               </div>
               <div className="bg-white/5 rounded-lg p-2 text-center">
