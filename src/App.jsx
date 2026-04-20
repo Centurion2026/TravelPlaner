@@ -174,7 +174,80 @@ export default function App() {
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
-  const totalPeople = form.adults + form.children
+  const [exploreLoading, setExploreLoading] = useState(false)
+  const [exploreSuggestions, setExploreSuggestions] = useState(null)
+  const [exploreError, setExploreError] = useState(null)
+
+  const handleExplore = async () => {
+    if (!form.origin.trim()) { setExploreError('Unesi polazak da bismo znali odakle kreceš.'); return }
+    if (!form.departDate) { setExploreError('Izaberi datum polaska.'); return }
+    setExploreError(null)
+    setExploreLoading(true)
+    setExploreSuggestions(null)
+    try {
+      const nights = Math.max(1, Math.round((new Date(form.returnDate) - new Date(form.departDate)) / 86400000))
+      const origin = form.origin.split(',')[0].trim()
+      const prompt = `You are a European travel recommendation engine. The traveler is departing from "${origin}" around ${form.departDate} for approximately ${nights} nights with ${form.adults} adults and ${form.children} children.
+
+Return ONLY a valid JSON array (no markdown, no explanation) of exactly 6 European city recommendations. Each must be a different country. Format:
+[
+  {
+    "city": "Amsterdam",
+    "country": "Netherlands",
+    "country_code": "NL",
+    "flag": "🇳🇱",
+    "tagline": "City of canals, bikes and world-class museums",
+    "why_now": "May is tulip season and weather is perfect for cycling",
+    "estimated_flight_eur": 85,
+    "flight_note": "Direct Wizz Air from Sarajevo ~85 EUR return",
+    "avg_daily_budget_eur": 120,
+    "weather_in_month": "18-22°C, partly cloudy",
+    "top_3": ["Rijksmuseum", "Anne Frank House", "Van Gogh Museum"],
+    "best_for": ["culture", "nightlife", "food"],
+    "visa_needed": false,
+    "direct_flight": true,
+    "crowd_level": "Moderate",
+    "score": 92,
+    "google_flights_url": "https://www.google.com/travel/flights?q=flights+from+${encodeURIComponent(origin)}+to+Amsterdam+on+${form.departDate}"
+  }
+]
+Rules:
+- Suggest cities realistically accessible from ${origin} by plane
+- Mix: 2 popular destinations + 2 hidden gems + 2 value picks
+- estimated_flight_eur: realistic return ticket price from ${origin} (round trip, economy)
+- avg_daily_budget_eur: realistic daily spend per person (accommodation + food + transport)
+- best_for: 2-3 tags from: culture|history|beaches|nightlife|food|nature|architecture|shopping|family|romance|adventure|art
+- crowd_level: "Low" | "Moderate" | "High" | "Very High"
+- score: 0-100 overall recommendation score based on value, weather, accessibility
+- visa_needed: whether BiH passport needs a visa
+- Sort by score descending`
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 2000,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      })
+      if (!response.ok) throw new Error('API greska')
+      const data = await response.json()
+      const text = (data.content?.[0]?.text || '').replace(/```json\n?|\n?```/g, '').trim()
+      const parsed = JSON.parse(text)
+      setExploreSuggestions(parsed)
+    } catch (err) {
+      setExploreError('Nije moguće dohvatiti prijedloge. Pokusaj ponovo.')
+    } finally {
+      setExploreLoading(false)
+    }
+  }
+
+  const handlePickDestination = (suggestion) => {
+    setForm(f => ({ ...f, destination: `${suggestion.city}, ${suggestion.country}`, transport: 'plane' }))
+    setExploreSuggestions(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   // Auto-clear childrenAges kad children=0
   useEffect(() => {
@@ -281,8 +354,23 @@ export default function App() {
           <FormCard
             form={form} setForm={setForm} onSubmit={handleSubmit}
             loading={loading} error={error} onRetry={handleSubmit}
+            onExplore={handleExplore} exploreLoading={exploreLoading} exploreError={exploreError}
             geoStatus={geoStatus} onGeoRequest={requestGeolocation}
           />
+          {exploreLoading && (
+            <div className="card mt-4 flex items-center gap-3 text-white/70">
+              <div className="w-5 h-5 border-2 border-accent-400 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
+              <span>AI analizira europske destinacije za tvoj polazak... ✈️</span>
+            </div>
+          )}
+          {exploreSuggestions && !exploreLoading && (
+            <ExploreSuggestions
+              data={exploreSuggestions}
+              form={form}
+              onPick={handlePickDestination}
+              onClose={() => setExploreSuggestions(null)}
+            />
+          )}
           {loading && <LoadingState />}
           {isStale && !loading && <StaleBanner onRefresh={handleSubmit} />}
           {plan?._partial_failures?.length > 0 && !loading && <PartialWarning plan={plan} />}
@@ -366,7 +454,7 @@ function GeoPrompt({ onAllow, onSkip }) {
   )
 }
 
-function FormCard({ form, setForm, onSubmit, loading, error, onRetry, geoStatus, onGeoRequest }) {
+function FormCard({ form, setForm, onSubmit, loading, error, onRetry, geoStatus, onGeoRequest, onExplore, exploreLoading, exploreError }) {
   const update = (k) => (e) => setForm({ ...form, [k]: e.target.value })
   const updateNum = (k) => (e) => setForm({ ...form, [k]: Math.max(0, parseInt(e.target.value) || 0) })
 
@@ -439,13 +527,29 @@ function FormCard({ form, setForm, onSubmit, loading, error, onRetry, geoStatus,
       </div>
 
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
-        <button type="submit" disabled={loading} className="btn-primary">
+        <button type="submit" disabled={loading || exploreLoading} className="btn-primary">
           {loading ? 'Planiram…' : 'Isplaniraj putovanje'}
+        </button>
+        <button
+          type="button"
+          onClick={onExplore}
+          disabled={loading || exploreLoading}
+          className="flex items-center gap-2 bg-violet-600/80 hover:bg-violet-500 disabled:opacity-50 text-white font-semibold rounded-xl px-5 py-3 transition-colors"
+          title="AI predlaže 6 europskih destinacija na osnovu tvog polaska i datuma"
+        >
+          {exploreLoading ? (
+            <><span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Tražim...</>
+          ) : (
+            <>🌍 Gdje da idem?</>
+          )}
         </button>
         <div className="text-white/50 text-sm">
           {travelerSummary(form.adults, form.children, form.childrenAges)}
         </div>
       </div>
+      {exploreError && (
+        <div className="text-sm text-amber-300 bg-amber-900/20 border border-amber-500/30 rounded-xl px-4 py-3">{exploreError}</div>
+      )}
       {error && (
         <div className="text-sm text-red-300 bg-red-900/30 border border-red-500/30 rounded-xl px-4 py-3 whitespace-pre-line">
           <div className="flex items-start justify-between gap-3">
@@ -457,6 +561,138 @@ function FormCard({ form, setForm, onSubmit, loading, error, onRetry, geoStatus,
         </div>
       )}
     </form>
+  )
+}
+
+function ExploreSuggestions({ data, form, onPick, onClose }) {
+  if (!data?.length) return null
+
+  const tagColors = {
+    culture: 'bg-violet-500/20 text-violet-300', history: 'bg-amber-500/20 text-amber-300',
+    beaches: 'bg-sky-500/20 text-sky-300', nightlife: 'bg-pink-500/20 text-pink-300',
+    food: 'bg-orange-500/20 text-orange-300', nature: 'bg-emerald-500/20 text-emerald-300',
+    architecture: 'bg-indigo-500/20 text-indigo-300', shopping: 'bg-rose-500/20 text-rose-300',
+    family: 'bg-cyan-500/20 text-cyan-300', romance: 'bg-red-500/20 text-red-300',
+    adventure: 'bg-lime-500/20 text-lime-300', art: 'bg-purple-500/20 text-purple-300',
+  }
+
+  const crowdColor = { 'Low': 'text-emerald-400', 'Moderate': 'text-amber-400', 'High': 'text-orange-400', 'Very High': 'text-red-400' }
+
+  const origin = form.origin.split(',')[0].trim()
+
+  return (
+    <div className="card mt-4 border-violet-500/20 bg-gradient-to-br from-violet-900/20 to-ink-800/60">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="section-title mb-0">🌍 Gdje da idem? <span className="text-violet-400 text-base font-normal">— AI preporuke</span></div>
+          <div className="text-white/50 text-sm mt-1">Polazak: <span className="text-white/70">{origin}</span> · {form.departDate} · avion</div>
+        </div>
+        <button onClick={onClose} className="text-white/30 hover:text-white/70 text-2xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors">×</button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {data.map((s, i) => (
+          <div key={i} className={`rounded-2xl border p-4 flex flex-col gap-3 transition-all hover:scale-[1.01] ${i === 0 ? 'border-violet-500/40 bg-violet-500/10' : 'border-white/8 bg-ink-900/40'}`}>
+            {/* Header */}
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                {i === 0 && <div className="text-violet-400 text-[10px] font-bold uppercase tracking-wide mb-1">AI top izbor</div>}
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">{s.flag}</span>
+                  <div>
+                    <div className="text-white font-bold text-base leading-tight">{s.city}</div>
+                    <div className="text-white/50 text-xs">{s.country}</div>
+                  </div>
+                </div>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className="text-white/30 text-[10px] uppercase tracking-wide">Score</div>
+                <div className={`text-xl font-black ${s.score >= 85 ? 'text-emerald-400' : s.score >= 70 ? 'text-amber-400' : 'text-white/60'}`}>{s.score}</div>
+              </div>
+            </div>
+
+            {/* Tagline */}
+            <p className="text-white/65 text-xs leading-snug">{s.tagline}</p>
+
+            {/* Why now */}
+            {s.why_now && (
+              <div className="flex gap-1.5 text-xs">
+                <span className="text-violet-400 flex-shrink-0">✦</span>
+                <span className="text-violet-300/80 italic">{s.why_now}</span>
+              </div>
+            )}
+
+            {/* Stats */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-white/5 rounded-lg p-2 text-center">
+                <div className="text-white/40 text-[10px] uppercase tracking-wide">Let (povratno)</div>
+                <div className="text-accent-400 font-bold text-sm">~€{s.estimated_flight_eur}</div>
+              </div>
+              <div className="bg-white/5 rounded-lg p-2 text-center">
+                <div className="text-white/40 text-[10px] uppercase tracking-wide">Dnevni budžet</div>
+                <div className="text-white font-bold text-sm">~€{s.avg_daily_budget_eur}</div>
+              </div>
+            </div>
+
+            {/* Weather + crowd */}
+            <div className="flex items-center justify-between text-xs text-white/50">
+              <span>🌡️ {s.weather_in_month}</span>
+              <span className={crowdColor[s.crowd_level] || 'text-white/40'}>👥 {s.crowd_level}</span>
+            </div>
+
+            {/* Visa + direct */}
+            <div className="flex gap-2">
+              {s.visa_needed === false && (
+                <span className="bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 text-[10px] font-semibold px-2 py-0.5 rounded-full">✓ Bez vize</span>
+              )}
+              {s.visa_needed === true && (
+                <span className="bg-amber-500/15 border border-amber-500/25 text-amber-400 text-[10px] font-semibold px-2 py-0.5 rounded-full">⚠ Treba viza</span>
+              )}
+              {s.direct_flight && (
+                <span className="bg-sky-500/15 border border-sky-500/25 text-sky-400 text-[10px] font-semibold px-2 py-0.5 rounded-full">✈ Direktan let</span>
+              )}
+            </div>
+
+            {/* Top 3 */}
+            {s.top_3?.length > 0 && (
+              <div className="text-xs text-white/50">
+                <span className="text-white/30 mr-1">Top:</span>
+                {s.top_3.join(' · ')}
+              </div>
+            )}
+
+            {/* Tags */}
+            {s.best_for?.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {s.best_for.map(tag => (
+                  <span key={tag} className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${tagColors[tag] || 'bg-white/8 text-white/50'}`}>{tag}</span>
+                ))}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-2 mt-auto pt-2 border-t border-white/5 no-print">
+              <button
+                onClick={() => onPick(s)}
+                className="flex-1 bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-3 py-2 transition-colors"
+              >
+                Isplaniraj →
+              </button>
+              {s.google_flights_url && (
+                <a href={s.google_flights_url} target="_blank" rel="noreferrer"
+                  className="bg-white/10 hover:bg-white/20 text-white/70 text-sm font-semibold rounded-lg px-3 py-2 transition-colors flex-shrink-0"
+                  title="Provjeri letove">
+                  ✈
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 text-white/30 text-xs">
+        Prijedlozi generisani AI-jem na osnovu polaska, datuma i tipičnih cijena. Klikni "Isplaniraj →" za detaljan plan putovanja.
+      </div>
+    </div>
   )
 }
 
