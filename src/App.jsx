@@ -82,6 +82,10 @@ function buildLinks(form) {
 
     momondo: `https://www.momondo.com/flight-search/${encodeURIComponent(from)}/${encodeURIComponent(to)}/${dep}/${ret}/?adults=${adults}&children=${children}`,
 
+    ryanair: `https://www.ryanair.com/en/cheap-flights/from/${fromSlug}/to/${toSlug}/?departureMonth=${dep.slice(0, 7)}&adults=${adults}&teens=0&children=${children}&infants=0`,
+
+    wizzair: `https://wizzair.com/en-gb/flights/search#/search?departureStation=${encodeURIComponent(from)}&arrivalStation=${encodeURIComponent(to)}&departureDate=${dep}&returnDate=${ret}&isReturn=true&adult=${adults}&child=${children}&infant=0`,
+
     // === AUTO ===
     googleMaps: `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(fromFull)}&destination=${encodeURIComponent(toFull)}&travelmode=driving`,
 
@@ -599,7 +603,7 @@ function TransportCard({ plan, form, totalPeople }) {
           <div className="text-white/60 text-sm mb-4">
             Pretražuj live letove na više platformi — cijene se ažuriraju u realnom vremenu:
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 no-print">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4 no-print">
             {(() => {
               const L = buildLinks(form)
               const links = plan.flight_search_links?.length ? plan.flight_search_links.map(l => ({
@@ -608,12 +612,19 @@ function TransportCard({ plan, form, totalPeople }) {
                    : l.name === 'Kiwi.com' ? L.kiwi
                    : l.name === 'Kayak' ? L.kayak
                    : l.name === 'Momondo' ? L.momondo
+                   : l.name === 'Ryanair' ? L.ryanair
+                   : l.name === 'Wizz Air' ? L.wizzair
                    : l.url
-              })) : [
+              })).concat([
+                { name: 'Ryanair',  url: L.ryanair,  emoji: '🔵' },
+                { name: 'Wizz Air', url: L.wizzair,  emoji: '🟣' },
+              ].filter(extra => !plan.flight_search_links.some(l => l.name === extra.name))) : [
                 { name: 'Google Flights', url: L.googleFlights, emoji: '✈️' },
                 { name: 'Kiwi.com',       url: L.kiwi,          emoji: '🥝' },
                 { name: 'Kayak',          url: L.kayak,          emoji: '🛩️' },
                 { name: 'Momondo',        url: L.momondo,        emoji: '🌐' },
+                { name: 'Ryanair',        url: L.ryanair,        emoji: '🔵' },
+                { name: 'Wizz Air',       url: L.wizzair,        emoji: '🟣' },
               ]
               return links.map((link) => (
                 <a key={link.name} href={link.url} target="_blank" rel="noreferrer"
@@ -660,6 +671,8 @@ function ExternalSearchButtons({ form, mode }) {
       <LinkBtn href={L.kiwi}>🥝 Kiwi.com</LinkBtn>
       <LinkBtn href={L.kayak}>🛩️ Kayak</LinkBtn>
       <LinkBtn href={L.momondo}>🌐 Momondo</LinkBtn>
+      <LinkBtn href={L.ryanair}>🔵 Ryanair</LinkBtn>
+      <LinkBtn href={L.wizzair}>🟣 Wizz Air</LinkBtn>
       <div className="w-full text-white/40 text-xs mt-1">{label} • {form.departDate} – {form.returnDate} • {form.adults + form.children} putnika</div>
     </div>
   )
@@ -735,6 +748,8 @@ function FlightsCard({ data, form, totalPeople }) {
           { name: 'Kiwi.com',       href: buildLinks(form).kiwi },
           { name: 'Kayak',          href: buildLinks(form).kayak },
           { name: 'Momondo',        href: buildLinks(form).momondo },
+          { name: 'Ryanair',        href: buildLinks(form).ryanair },
+          { name: 'Wizz Air',       href: buildLinks(form).wizzair },
         ].map((s, i) => (
           <a key={s.name} href={s.href} target="_blank" rel="noreferrer"
             className={`text-sm font-semibold rounded-lg px-4 py-2 transition-colors ${i === 0 ? 'bg-accent-500 hover:bg-accent-400 text-white' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
