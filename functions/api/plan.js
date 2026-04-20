@@ -263,191 +263,87 @@ async function fetchCityKnowledge(destinationGeo, env) {
   const cityKey = normalizeCityKey(destinationGeo.name || destinationGeo.displayName || '')
   const staticTransit = lookupTransitPrices(cityKey)
   const staticHotel = lookupHotelPriceRange(destinationGeo)
+  const empty = { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, tourist_traps: [], currency: null, source: 'static' }
 
-  const apiKey = env?.GROQ_API_KEY
-  if (!apiKey) {
-    return { transit: staticTransit, hotel_range: staticHotel, attractions: [], source: 'static' }
+  const apiKey = env && env.GROQ_API_KEY
+  if (!apiKey) return empty
+
+  const cityName = destinationGeo.displayName || destinationGeo.name || 'Unknown'
+
+  // Helper: single Groq call
+  const groqCall = async (prompt, maxTokens) => {
+    try {
+      const resp = await fetchWithTimeout(GROQ_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [
+            { role: 'system', content: 'Travel data API. Respond with valid JSON only. No markdown.' },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.1,
+          max_tokens: maxTokens,
+        }),
+      }, 17000)
+      if (!resp.ok) { console.error('Groq error:', resp.status); return null }
+      const groqLimits = {
+        remainingRequests: resp.headers.get('x-ratelimit-remaining-requests'),
+        remainingTokens: resp.headers.get('x-ratelimit-remaining-tokens'),
+        limitTokens: resp.headers.get('x-ratelimit-limit-tokens'),
+        resetTokens: resp.headers.get('x-ratelimit-reset-tokens'),
+      }
+      const data = await resp.json()
+      const text = (data.choices?.[0]?.message?.content || '').replace(/```json\n?|\n?```/g, '').trim()
+      try { return { parsed: JSON.parse(text), groqLimits } } catch { return null }
+    } catch (e) { console.error('groqCall error:', e?.message); return null }
   }
 
-  try {
-    const cityName = destinationGeo.displayName || destinationGeo.name || destinationGeo.country || 'Unknown'
-
-    const prompt = `You are a travel data API. Return ONLY a valid JSON object for "${cityName}", with NO explanation, NO markdown fences, NO comments. Use this exact structure:
+  // CALL 1 (core): city_info + transit + hotel + attractions
+  const corePrompt = `Travel data API. Return ONLY valid JSON for "${cityName}". No markdown.
 {
-  "city_info": {
-    "summary": "3-4 sentence factual overview: founding, location, significance, character",
-    "population": 500000,
-    "population_year": 2023,
-    "area_km2": 1285,
-    "founded_year": 753,
-    "country": "Italy",
-    "language": "Italian",
-    "currency": "EUR",
-    "timezone": "CET (UTC+1)",
-    "religion_pct": {
-      "Christian": 80,
-      "Muslim": 5,
-      "Atheist/non-religious": 12,
-      "Other": 3
-    },
-    "crime_index": 45.2,
-    "crime_level": "Moderate",
-    "crime_note": "Pickpocketing common in tourist areas. Violent crime low.",
-    "safety_tips": ["Watch your belongings on public transport", "Avoid poorly lit areas at night"],
-    "youtube_city_tour": "https://www.youtube.com/results?search_query=rome+italy+city+guide+travel+4k",
-    "wikipedia_url": "https://en.wikipedia.org/wiki/Rome",
-    "history_url": "https://en.wikipedia.org/wiki/History_of_Rome",
-    "numbeo_url": "https://www.numbeo.com/crime/in/Rome",
-    "worldometers_url": "https://www.worldometers.info/world-population/italy-population/"
-  },
-  "transit": {
-    "single_eur": 2.50,
-    "daily_eur": 8.00,
-    "weekly_eur": 25.00,
-    "note": "card name and zone info",
-    "tourist_pass": "tourist pass name or null",
-    "website": "https://official-transit-website.example",
-    "tips": "one practical tip for tourists using public transport"
-  },
-  "hotel_range": {
-    "budget": 60,
-    "mid": 130,
-    "luxury": 320
-  },
-  "attractions": [
-    {
-      "name": "Exact official name in local or English",
-      "description": "2-3 sentence factual description: what it is, when built or founded, what it contains or why it is famous",
-      "why_visit": "One specific compelling reason to visit this place",
-      "price_eur": 15,
-      "price_note": "Adults standard, what is included",
-      "duration_hours": 2,
-      "category": "museum",
-      "highlight": true
-    }
-  ],
-  "tourist_traps": [
-    {
-      "title": "Friendly bracelet man",
-      "description": "A man ties a bracelet on your wrist uninvited then demands payment.",
-      "avoid": "Walk past without stopping, say no firmly.",
-      "severity": "Medium",
-      "category": "scam"
-    }
-  ],
-  "currency": {
-    "name": "Turkish Lira",
-    "code": "TRY",
-    "symbol": "TL",
-    "is_eur": false,
-    "approx_rate": 35.5,
-    "rate_note": "1 EUR = approx 35.5 TRY (check live rate before travel)",
-    "exchange_tips": ["Use ATMs in city center", "Avoid airport exchange booths"],
-    "typical_costs": {"coffee": "40-60 TL", "budget_meal": "150-250 TL", "taxi_5km": "200-350 TL"}
+  "city_info": {"summary":"3 factual sentences","population":500000,"population_year":2023,"area_km2":1285,"founded_year":753,"language":"Italian","timezone":"CET (UTC+1)","religion_pct":{"Christian":80,"Muslim":5,"Atheist":12,"Other":3},"crime_index":45,"crime_level":"Moderate","crime_note":"short note","safety_tips":["tip1","tip2"],"youtube_city_tour":"https://www.youtube.com/results?search_query=cityname+city+guide","wikipedia_url":"https://en.wikipedia.org/wiki/City","history_url":"https://en.wikipedia.org/wiki/History_of_City","numbeo_url":"https://www.numbeo.com/crime/in/City","worldometers_url":"https://www.worldometers.info/world-population/country-population/"},
+  "transit": {"single_eur":2.5,"daily_eur":8,"weekly_eur":25,"note":"card info","tourist_pass":"pass name or null","website":"https://transit.example.com","tips":"practical tip"},
+  "hotel_range": {"budget":65,"mid":140,"luxury":360},
+  "attractions": [{"name":"Name","description":"2 sentences.","why_visit":"reason.","price_eur":15,"price_note":"adults","duration_hours":2,"category":"museum","highlight":true}]
+}
+Rules for ${cityName}:
+- city_info: real facts. crime_level: Very Low|Low|Moderate|High|Very High
+- transit: real EUR prices or null
+- hotel_range: budget hostel/3-star/5-star per night
+- attractions: exactly 12 most important museums and landmarks. highlight=true for top 5. AVOID generic memorials/plaques.`
+
+  // CALL 2 (enrich): tourist_traps + currency
+  const enrichPrompt = `Travel data API. Return ONLY valid JSON for "${cityName}". No markdown.
+{
+  "tourist_traps": [{"title":"Trap name","description":"What happens.","avoid":"How to avoid.","severity":"Medium","category":"scam"}],
+  "currency": {"name":"Euro","code":"EUR","symbol":"EUR","is_eur":true,"approx_rate":1,"rate_note":"Uses EUR","exchange_tips":["tip"],"typical_costs":{"coffee":"3-5 EUR","budget_meal":"12-18 EUR","taxi_5km":"10-15 EUR"}}
+}
+Rules for ${cityName}:
+- tourist_traps: exactly 5 real specific scams for this city. severity: Low|Medium|High. category: scam|overpriced|crowded|unsafe|misleading
+- currency: local currency. is_eur=true if city uses EUR. typical_costs in local currency with symbol.`
+
+  // Run both in parallel
+  const [coreResult, enrichResult] = await Promise.all([
+    groqCall(corePrompt, 2200),
+    groqCall(enrichPrompt, 800),
+  ])
+
+  const core = coreResult?.parsed || {}
+  const enrich = enrichResult?.parsed || {}
+
+  return {
+    transit: core.transit ? { ...core.transit, modes: staticTransit?.modes } : staticTransit,
+    hotel_range: core.hotel_range || staticHotel,
+    attractions: Array.isArray(core.attractions) ? core.attractions : [],
+    city_info: core.city_info || null,
+    tourist_traps: Array.isArray(enrich.tourist_traps) ? enrich.tourist_traps : [],
+    currency: enrich.currency || null,
+    groq_limits: coreResult?.groqLimits || null,
+    source: 'groq',
   }
 }
-Rules:
-- All monetary values in EUR (convert approximately if needed)
-- city_info: accurate facts about the city
-  - population: latest available figure as integer
-  - crime_index: Numbeo crime index 0-100 (lower = safer), null if unknown
-  - crime_level: "Very Low" | "Low" | "Moderate" | "High" | "Very High"
-  - religion_pct: approximate percentages that sum to 100, use actual demographic data
-  - youtube_city_tour: search URL on YouTube for a city guide/tour video (use youtube.com/results?search_query=)
-  - wikipedia_url: correct Wikipedia article URL for the city
-  - history_url: Wikipedia History of [City] article URL
-  - numbeo_url: correct Numbeo crime URL for the city
-  - worldometers_url: Worldometers population page URL for the country
-- transit: real public transport prices, null if genuinely unknown
-- hotel_range: typical nightly prices per room - budget hostel / 3-star / 5-star
-- attractions: EXACTLY 15 entries, ordered by importance (most famous first)
-  PRIORITIZE: world-famous museums, UNESCO World Heritage sites, iconic palaces or castles, major art galleries, ancient ruins
-  STRICTLY AVOID: generic war memorials, minor statues, ordinary parks, small local churches, plaques
-  - name: the exact well-known name tourists search for
-  - description: specific facts (founded year, architect, key artworks or exhibits, world records, size)
-  - why_visit: unique angle - what you see or experience that you cannot see anywhere else
-  - price_eur: accurate entry price, 0 if genuinely free, null only if truly unknown
-  - price_note: what adults pay and what is included in that price
-  - duration_hours: realistic visit time (0.5=quick photo stop, 1=brief visit, 2=standard, 3=half day, 4+=full day)
-  - category: exactly one of: museum|palace|church|ancient|gallery|park|landmark|science|nature|zoo|aquarium|viewpoint|market|theatre
-  - highlight: true for the top 5 absolute must-sees, false for the other 10
-- tourist_traps: exactly 6 specific, real scams or overpriced situations tourists encounter in this city
-  - title: short name of the trap (e.g. "Foto s kostimiranim likom", "Restoran blizu Colosseum-a")
-  - description: 1-2 sentences: what happens, why it is a problem
-  - avoid: one practical sentence how to avoid it
-  - severity: "Low" | "Medium" | "High"
-  - category: "scam"|"overpriced"|"crowded"|"unsafe"|"misleading"
-- currency: local currency information
-  - name: full currency name (e.g. "Turkish Lira")
-  - code: ISO code (e.g. "TRY")
-  - symbol: currency symbol (e.g. "TL")
-  - is_eur: true if the destination uses EUR as official currency
-  - approx_rate: approximate how many local units per 1 EUR (e.g. 35.5 for TRY), 1 if EUR
-  - rate_note: "1 EUR = approx X [currency] (check live rate)"
-  - exchange_tips: ["Use ATMs over exchange offices", "Avoid airport exchange rates"]
-  - typical_costs: {"coffee": "5-8 TL", "budget_meal": "50-80 TL", "taxi_5km": "80-120 TL"}`
 
-    const response = await fetchWithTimeout(GROQ_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a travel data API. Always respond with valid JSON only, no markdown, no explanation.',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: 4000,
-      }),
-    }, 20000)
-
-    if (!response.ok) {
-      console.error('Groq API error:', response.status, await response.text())
-      return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, tourist_traps: [], currency: null, source: 'api_error' }
-    }
-
-    // Extract Groq rate limit headers
-    const groqLimits = {
-      limitRequests: response.headers.get('x-ratelimit-limit-requests'),
-      remainingRequests: response.headers.get('x-ratelimit-remaining-requests'),
-      limitTokens: response.headers.get('x-ratelimit-limit-tokens'),
-      remainingTokens: response.headers.get('x-ratelimit-remaining-tokens'),
-      resetTokens: response.headers.get('x-ratelimit-reset-tokens'),
-    }
-
-    const data = await response.json()
-    const text = (data.choices?.[0]?.message?.content || '').replace(/```json\n?|\n?```/g, '').trim()
-
-    let parsed
-    try { parsed = JSON.parse(text) }
-    catch { return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, tourist_traps: [], currency: null, source: 'parse_error' } }
-
-    return {
-      transit: parsed.transit
-        ? { ...parsed.transit, modes: staticTransit?.modes }
-        : staticTransit,
-      hotel_range: parsed.hotel_range || staticHotel,
-      attractions: Array.isArray(parsed.attractions) ? parsed.attractions : [],
-      city_info: parsed.city_info || null,
-      tourist_traps: Array.isArray(parsed.tourist_traps) ? parsed.tourist_traps : [],
-      currency: parsed.currency || null,
-      groq_limits: groqLimits,
-      source: 'groq',
-    }
-  } catch (err) {
-    console.error('fetchCityKnowledge error:', err?.message)
-    return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, tourist_traps: [], currency: null, source: 'error' }
-  }
-}
 
 // Enrich OSM attractions with Claude's price knowledge (fuzzy name match)
 // When Groq returns curated attractions, use them as primary list
