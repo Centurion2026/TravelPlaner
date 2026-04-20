@@ -101,6 +101,7 @@ async function fetchHolidays(destination, departDate, returnDate) {
     })
 
     return { countryCode, all: inTrip, country: geoData?.[0]?.address?.country }
+  } catch { return null }
 }
 // Izvuci samo naziv grada (prije zareza)
 const cityOnly = (str) => str ? str.split(',')[0].trim() : ''
