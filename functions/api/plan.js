@@ -460,7 +460,7 @@ export async function onRequestGet(context) {
 }
 
 export async function onRequestPost(context) {
-  const DEADLINE_MS = 60000
+  const DEADLINE_MS = 90000
 
   try {
     const result = await Promise.race([
@@ -470,7 +470,7 @@ export async function onRequestPost(context) {
 
     if (result?.__timeout) {
       return json({
-        error: 'Vremenski limit je prekoracen (60s).',
+        error: 'Vremenski limit je prekoracen (90s).',
         hint: 'Pokusaj ponovo - serveri su mozda bili zauzeti.',
       }, 504)
     }
@@ -514,15 +514,17 @@ async function mainLogic(context) {
     return json({ error: 'Destinacija nije pronadjena. Pokusaj unijeti grad i drzavu, npr. Rim, Italija.' }, 404)
   }
 
-  const countryInfo = await fetchCountryInfo(destinationGeo.countryCode, destinationGeo.country)
-
-  const [weather, transit, countryEmergency, cityKnowledge, osmElements] = await Promise.all([
-    fetchWeather(destinationGeo, departDate, returnDate, env),
-    fetchTransit(destinationGeo),
-    buildEmergencyInfo(countryInfo),
-    fetchCityKnowledge(destinationGeo, env),
-    fetchAttractionElements(destinationGeo),
+  const [countryInfo, [weather, transit, cityKnowledge, osmElements]] = await Promise.all([
+    fetchCountryInfo(destinationGeo.countryCode, destinationGeo.country),
+    Promise.all([
+      fetchWeather(destinationGeo, departDate, returnDate, env),
+      fetchTransit(destinationGeo),
+      fetchCityKnowledge(destinationGeo, env),
+      fetchAttractionElements(destinationGeo),
+    ]),
   ])
+
+  const countryEmergency = await buildEmergencyInfo(countryInfo)
 
   // Build curated attraction list: Groq primary, OSM for coordinates/fallback
   const osmAttractions = buildOsmAttractions(osmElements, destinationGeo)
@@ -1358,67 +1360,61 @@ async function geocodePlace(query) {
   const parsed = parseCoordString(query)
   if (parsed) {
     return {
-      name: query,
-      displayName: query,
-      admin1: '',
-      country: '',
-      countryCode: '',
-      lat: parsed.lat,
-      lng: parsed.lng,
+      name: query, displayName: query, admin1: '',
+      country: '', countryCode: '', lat: parsed.lat, lng: parsed.lng,
     }
   }
 
   const url = `${OPEN_METEO_GEOCODE_URL}?name=${encodeURIComponent(query)}&count=1&language=bs&format=json`
-  const response = await fetch(url)
-  if (!response.ok) return null
-  const data = await response.json()
-  const item = data?.results?.[0]
-  if (!item) return null
-
-  return {
-    name: item.name,
-    displayName: [item.name, item.admin1, item.country].filter(Boolean).join(', '),
-    admin1: item.admin1 || '',
-    country: item.country || '',
-    countryCode: item.country_code || '',
-    lat: item.latitude,
-    lng: item.longitude,
-  }
+  try {
+    const response = await fetchWithTimeout(url, {}, 8000)
+    if (!response.ok) return null
+    const data = await response.json()
+    const item = data?.results?.[0]
+    if (!item) return null
+    return {
+      name: item.name,
+      displayName: [item.name, item.admin1, item.country].filter(Boolean).join(', '),
+      admin1: item.admin1 || '',
+      country: item.country || '',
+      countryCode: item.country_code || '',
+      lat: item.latitude,
+      lng: item.longitude,
+    }
+  } catch { return null }
 }
 
 async function fetchCountryInfo(countryCode, countryName) {
-  if (countryCode) {
-    const byCode = await fetchJson(`${REST_COUNTRIES_URL}/alpha/${countryCode}?fields=name,cca2,capital,languages,region,subregion`)
-    if (byCode) return Array.isArray(byCode) ? byCode[0] : byCode
-  }
-  if (!countryName) return null
-  const byName = await fetchJson(`${REST_COUNTRIES_URL}/name/${encodeURIComponent(countryName)}?fields=name,cca2,capital,languages,region,subregion`)
-  return Array.isArray(byName) ? byName[0] : byName
+  try {
+    if (countryCode) {
+      const byCode = await fetchJson(`${REST_COUNTRIES_URL}/alpha/${countryCode}?fields=name,cca2,capital,languages,region,subregion`, 6000)
+      if (byCode) return Array.isArray(byCode) ? byCode[0] : byCode
+    }
+    if (!countryName) return null
+    const byName = await fetchJson(`${REST_COUNTRIES_URL}/name/${encodeURIComponent(countryName)}?fields=name,cca2,capital,languages,region,subregion`, 6000)
+    return Array.isArray(byName) ? byName[0] : byName
+  } catch { return null }
 }
 
 async function fetchOverpass(query) {
   try {
-    const response = await fetch(OVERPASS_URL, {
+    const response = await fetchWithTimeout(OVERPASS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: query,
-    })
+    }, 18000)
     if (!response.ok) return []
     const data = await response.json()
     return Array.isArray(data?.elements) ? data.elements : []
-  } catch {
-    return []
-  }
+  } catch { return [] }
 }
 
-async function fetchJson(url) {
+async function fetchJson(url, timeoutMs = 8000) {
   try {
-    const response = await fetch(url)
+    const response = await fetchWithTimeout(url, {}, timeoutMs)
     if (!response.ok) return null
     return await response.json()
-  } catch {
-    return null
-  }
+  } catch { return null }
 }
 
 async function getAmadeusToken(env) {
