@@ -200,8 +200,9 @@ export default function App() {
         }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'API greska')
-      if (!data.suggestions?.length) throw new Error('Nema prijedloga')
+      if (!response.ok) throw new Error(data.error || 'HTTP ' + response.status)
+      if (data.error) throw new Error(data.error)
+      if (!data.suggestions?.length) throw new Error('Backend vratio prazan niz. Groq odgovor: ' + (data.debug || 'nepoznato'))
       setExploreSuggestions(data.suggestions)
       if (data.groq_limits) setGroqLimits(data.groq_limits)
     } catch (err) {

@@ -1,6 +1,7 @@
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
 const GROQ_MODEL = 'llama-3.3-70b-versatile'
-const GROQ_MODEL_FALLBACK = 'llama3-8b-8192'
+const GROQ_MODEL_FALLBACK = 'llama-3.1-70b-versatile'
+const GROQ_MODEL_FALLBACK2 = 'llama3-70b-8192'
 
 export async function onRequestPost(context) {
   const { request, env } = context
@@ -61,8 +62,16 @@ export async function onRequestPost(context) {
 
     if (!resp.ok) {
       const et = await resp.text()
-      console.error('Fallback error', resp.status, et.slice(0, 150))
-      return new Response(JSON.stringify({ error: 'Groq greska ' + resp.status + '. Pokusaj za minutu.' }), { status: 200, headers: corsHeaders })
+      console.error('Fallback1 error', resp.status, et.slice(0, 150))
+      if (resp.status === 429 || resp.status >= 500) {
+        resp = await makeRequest(GROQ_MODEL_FALLBACK2)
+      }
+    }
+
+    if (!resp.ok) {
+      const et = await resp.text()
+      console.error('Fallback2 error', resp.status, et.slice(0, 150))
+      return new Response(JSON.stringify({ error: 'Groq greska ' + resp.status + '. Svi modeli zauzeti, pokusaj za minutu.' }), { status: 200, headers: corsHeaders })
     }
 
     const groqLimits = {
@@ -92,7 +101,10 @@ export async function onRequestPost(context) {
 
     if (!list.length) {
       console.error('Empty list, raw:', raw.slice(0, 300))
-      return new Response(JSON.stringify({ error: 'Nema prijedloga. Pokusaj ponovo.' }), { status: 200, headers: corsHeaders })
+      return new Response(JSON.stringify({
+        error: 'Groq vratio prazan odgovor.',
+        debug: 'raw_len=' + raw.length + ' text_preview=' + text.slice(0, 100)
+      }), { status: 200, headers: corsHeaders })
     }
 
     const toFlag = function(code) {
