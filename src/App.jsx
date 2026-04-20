@@ -456,7 +456,7 @@ function FormCard({ form, setForm, onSubmit, loading, error, onRetry, geoStatus,
         </div>
         <div>
           <label className="label">Destinacija</label>
-          <input className="input" value={form.destination} onChange={update('destination')} placeholder="npr. Rim, Italija" />
+          <input className="input" value={form.destination} onChange={update('destination')} placeholder="Grad (npr. Rim)" />
         </div>
         <div>
           <label className="label">Datum polaska</label>
