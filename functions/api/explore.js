@@ -1,136 +1,155 @@
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
-const GROQ_MODEL = 'llama-3.3-70b-versatile'
-const GROQ_MODEL_FALLBACK = 'llama-3.1-70b-versatile'
-const GROQ_MODEL_FALLBACK2 = 'llama3-70b-8192'
+const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama3-70b-8192', 'llama3-8b-8192']
 
 export async function onRequestPost(context) {
   const { request, env } = context
 
-  const corsHeaders = {
+  const headers = {
     'Access-Control-Allow-Origin': '*',
     'Content-Type': 'application/json; charset=utf-8',
   }
 
   let body
   try { body = await request.json() }
-  catch { return new Response(JSON.stringify({ error: 'Neispravan zahtjev.' }), { status: 400, headers: corsHeaders }) }
+  catch { return new Response(JSON.stringify({ error: 'Neispravan zahtjev.' }), { status: 400, headers }) }
 
   const { origin, departDate, returnDate, adults, children } = body || {}
   if (!origin || !departDate) {
-    return new Response(JSON.stringify({ error: 'Nedostaju polja.' }), { status: 400, headers: corsHeaders })
+    return new Response(JSON.stringify({ error: 'Nedostaju polja: origin, departDate.' }), { status: 400, headers })
   }
 
   const apiKey = env && env.GROQ_API_KEY
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: 'GROQ_API_KEY nije konfigurisan.' }), { status: 200, headers: corsHeaders })
+    return new Response(JSON.stringify({ error: 'GROQ_API_KEY nije konfigurisan u Cloudflare env.' }), { status: 200, headers })
   }
 
   const nights = Math.max(1, Math.round((new Date(returnDate) - new Date(departDate)) / 86400000))
   const adultsN = parseInt(adults) || 2
   const childrenN = parseInt(children) || 0
   const cityOrigin = (origin || '').split(',')[0].trim()
+  const ret = returnDate || departDate
 
-  const sampleItem = '{"city":"Amsterdam","country":"Netherlands","flag":"NL","tagline":"City of canals","why_now":"Great weather in spring","estimated_flight_eur":85,"avg_daily_budget_eur":120,"weather_in_month":"16-21C","top_3":["Rijksmuseum","Anne Frank House","Vondelpark"],"best_for":["culture","food"],"visa_needed":false,"direct_flight":false,"crowd_level":"Moderate","score":88}'
-  const prompt = 'From "' + cityOrigin + '", departing ' + departDate + ', ' + nights + ' nights, ' + adultsN + ' adults, ' + childrenN + ' children, Bosnian passport. Recommend 6 European cities (different countries). Return ONLY a JSON array starting with [ and ending with ], no other text. Use this format: [' + sampleItem + ']. Mix popular + hidden gems + value picks. estimated_flight_eur = return economy from ' + cityOrigin + '. visa_needed for BiH passport. flag = 2-letter country code. Sort by score desc.'
+  const prompt = 'You are a European travel recommendation engine. Traveler departs from "' + cityOrigin + '" on ' + departDate + ' for ' + nights + ' nights (' + adultsN + ' adults, ' + childrenN + ' children). They have a Bosnian (BiH) passport.\n\nRespond ONLY with a JSON array of exactly 6 European city recommendations (one per country). No text, no markdown. Start immediately with [\n\nEach object must have: city, country, flag (2-letter ISO code), tagline, why_now, estimated_flight_eur (return economy), avg_daily_budget_eur, weather_in_month, top_3 (array of 3 strings), best_for (array of 2-3 tags), visa_needed (boolean), direct_flight (boolean), crowd_level (Low/Moderate/High/Very High), score (0-100).\n\nMix: 2 popular + 2 hidden gems + 2 best value. Sort by score descending.'
 
-  const makeRequest = function(model) {
-    return fetch(GROQ_API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-      body: JSON.stringify({
-        model: model,
-        messages: [
-          { role: 'system', content: 'JSON API. Return ONLY a valid JSON array. No explanation, no markdown.' },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.1,
-        max_tokens: 2000,
-      }),
-    })
-  }
+  // Try each model until one works
+  let resp = null
+  let lastError = 'Svi Groq modeli neuspjesni'
 
-  try {
-    let resp = await makeRequest(GROQ_MODEL)
-
-    if (!resp.ok) {
-      const et = await resp.text()
-      console.error('Primary error', resp.status, et.slice(0, 150))
-      if (resp.status === 429 || resp.status >= 500) {
-        resp = await makeRequest(GROQ_MODEL_FALLBACK)
-      }
-    }
-
-    if (!resp.ok) {
-      const et = await resp.text()
-      console.error('Fallback1 error', resp.status, et.slice(0, 150))
-      if (resp.status === 429 || resp.status >= 500) {
-        resp = await makeRequest(GROQ_MODEL_FALLBACK2)
-      }
-    }
-
-    if (!resp.ok) {
-      const et = await resp.text()
-      console.error('Fallback2 error', resp.status, et.slice(0, 150))
-      return new Response(JSON.stringify({ error: 'Groq greska ' + resp.status + '. Svi modeli zauzeti, pokusaj za minutu.' }), { status: 200, headers: corsHeaders })
-    }
-
-    const groqLimits = {
-      remainingRequests: resp.headers.get('x-ratelimit-remaining-requests'),
-      remainingTokens: resp.headers.get('x-ratelimit-remaining-tokens'),
-      limitTokens: resp.headers.get('x-ratelimit-limit-tokens'),
-      resetTokens: resp.headers.get('x-ratelimit-reset-tokens'),
-    }
-
-    const json = await resp.json()
-    const raw = json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content || ''
-    console.log('Raw preview:', raw.slice(0, 200))
-
-    let text = raw.replace(/```json|```/g, '').trim()
-    const s = text.indexOf('[')
-    const e = text.lastIndexOf(']')
-    if (s !== -1 && e > s) text = text.slice(s, e + 1)
-
-    let list
+  for (let i = 0; i < GROQ_MODELS.length; i++) {
+    const model = GROQ_MODELS[i]
     try {
-      const p = JSON.parse(text)
-      list = Array.isArray(p) ? p : (Object.values(p).find(function(v) { return Array.isArray(v) }) || [])
-    } catch (err) {
-      console.error('Parse fail:', err.message, raw.slice(0, 300))
-      return new Response(JSON.stringify({ error: 'AI greska parsiranja. Pokusaj ponovo.' }), { status: 200, headers: corsHeaders })
-    }
-
-    if (!list.length) {
-      console.error('Empty list, raw:', raw.slice(0, 300))
-      return new Response(JSON.stringify({
-        error: 'Groq vratio prazan odgovor.',
-        debug: 'raw_len=' + raw.length + ' text_preview=' + text.slice(0, 100)
-      }), { status: 200, headers: corsHeaders })
-    }
-
-    const toFlag = function(code) {
-      if (!code || code.length !== 2) return '?'
-      const u = code.toUpperCase()
-      return String.fromCodePoint(0x1F1E6 + u.charCodeAt(0) - 65) + String.fromCodePoint(0x1F1E6 + u.charCodeAt(1) - 65)
-    }
-
-    const enriched = list.slice(0, 6).map(function(s) {
-      const city = s.city || ''
-      const q = 'flights from ' + cityOrigin + ' to ' + city + ' on ' + departDate + ' returning ' + (returnDate || departDate) + ' ' + adultsN + ' adults'
-      const fs = cityOrigin.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
-      const ts = city.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
-      return Object.assign({}, s, {
-        flag: toFlag(s.flag),
-        google_flights_url: 'https://www.google.com/travel/flights?q=' + encodeURIComponent(q),
-        kiwi_url: 'https://www.kiwi.com/en/search/results/' + fs + '/' + ts + '/' + departDate + '/' + (returnDate || departDate) + '?adults=' + adultsN + '&children=' + childrenN,
+      const r = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+        body: JSON.stringify({
+          model: model,
+          messages: [
+            { role: 'system', content: 'You are a JSON API. Return ONLY a valid JSON array starting with [ and ending with ]. Nothing else.' },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.1,
+          max_tokens: 2000,
+        }),
       })
-    })
 
-    return new Response(JSON.stringify({ suggestions: enriched, groq_limits: groqLimits }), { status: 200, headers: corsHeaders })
+      // Read status before consuming body
+      const status = r.status
+      const responseText = await r.text()
 
-  } catch (err) {
-    console.error('Fatal:', err && err.message)
-    return new Response(JSON.stringify({ error: 'Neocekivana greska. Pokusaj ponovo.' }), { status: 200, headers: corsHeaders })
+      if (status === 401 || status === 403) {
+        return new Response(JSON.stringify({ error: 'Groq API kljuc nije ispravan (401/403). Provjeri GROQ_API_KEY u Cloudflare Settings.' }), { status: 200, headers })
+      }
+
+      if (!r.ok) {
+        lastError = 'Groq model ' + model + ' vratio ' + status
+        console.error('Model', model, 'error:', status, responseText.slice(0, 100))
+        continue // try next model
+      }
+
+      // Parse Groq JSON response
+      let groqData
+      try { groqData = JSON.parse(responseText) }
+      catch (e) {
+        lastError = 'Groq vratio nevalidan JSON'
+        console.error('Groq JSON parse fail:', responseText.slice(0, 200))
+        continue
+      }
+
+      const groqLimits = {
+        remainingRequests: r.headers.get('x-ratelimit-remaining-requests'),
+        remainingTokens: r.headers.get('x-ratelimit-remaining-tokens'),
+        limitTokens: r.headers.get('x-ratelimit-limit-tokens'),
+        resetTokens: r.headers.get('x-ratelimit-reset-tokens'),
+      }
+
+      const raw = groqData.choices && groqData.choices[0] && groqData.choices[0].message && groqData.choices[0].message.content || ''
+      console.log('Model:', model, '| Raw length:', raw.length, '| Preview:', raw.slice(0, 100))
+
+      // Extract JSON array from response
+      let text = raw.replace(/```json|```/g, '').trim()
+      const startIdx = text.indexOf('[')
+      const endIdx = text.lastIndexOf(']')
+      if (startIdx !== -1 && endIdx > startIdx) {
+        text = text.slice(startIdx, endIdx + 1)
+      }
+
+      // Parse the suggestions array
+      let list = []
+      try {
+        const parsed = JSON.parse(text)
+        if (Array.isArray(parsed)) {
+          list = parsed
+        } else if (parsed && typeof parsed === 'object') {
+          const found = Object.values(parsed).find(function(v) { return Array.isArray(v) })
+          if (found) list = found
+        }
+      } catch (parseErr) {
+        lastError = 'Parsiranje odgovora neuspjesno: ' + parseErr.message
+        console.error('Parse fail:', parseErr.message, '| text:', text.slice(0, 200))
+        continue
+      }
+
+      if (list.length === 0) {
+        lastError = 'Prazan niz (raw_len=' + raw.length + ')'
+        console.error('Empty list. Raw:', raw.slice(0, 300))
+        continue
+      }
+
+      // Build flag emoji from 2-letter country code
+      const toFlag = function(code) {
+        if (!code || typeof code !== 'string' || code.length !== 2) return ''
+        try {
+          const u = code.toUpperCase()
+          const a = 0x1F1E6 + u.charCodeAt(0) - 65
+          const b = 0x1F1E6 + u.charCodeAt(1) - 65
+          return String.fromCodePoint(a) + String.fromCodePoint(b)
+        } catch (e) { return '' }
+      }
+
+      const enriched = list.slice(0, 6).map(function(s) {
+        const city = (s.city || 'Unknown').toString()
+        const q = 'flights from ' + cityOrigin + ' to ' + city + ' on ' + departDate + ' returning ' + ret + ' ' + adultsN + ' adults'
+        const fromSlug = cityOrigin.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+        const toSlug = city.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+        const flagEmoji = toFlag(s.flag)
+        return Object.assign({}, s, {
+          flag: flagEmoji,
+          google_flights_url: 'https://www.google.com/travel/flights?q=' + encodeURIComponent(q),
+          kiwi_url: 'https://www.kiwi.com/en/search/results/' + fromSlug + '/' + toSlug + '/' + departDate + '/' + ret + '?adults=' + adultsN + '&children=' + childrenN,
+        })
+      })
+
+      return new Response(JSON.stringify({ suggestions: enriched, groq_limits: groqLimits }), { status: 200, headers })
+
+    } catch (fetchErr) {
+      lastError = 'Fetch greska (' + model + '): ' + (fetchErr && fetchErr.message)
+      console.error('Fetch error for model', model, ':', fetchErr && fetchErr.message)
+      // continue to next model
+    }
   }
+
+  // All models failed
+  return new Response(JSON.stringify({ error: lastError }), { status: 200, headers })
 }
 
 export async function onRequestOptions() {
