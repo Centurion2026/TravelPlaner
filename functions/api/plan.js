@@ -289,16 +289,33 @@ async function fetchCityKnowledge(destinationGeo, env) {
     "luxury": 320
   },
   "attractions": [
-    {"name": "Exact Attraction Name", "price_eur": 15, "note": "Adults, what is included"},
-    {"name": "Free Place Name", "price_eur": 0, "note": "Free to visit"}
+    {
+      "name": "Exact official name in local or English",
+      "description": "2-3 sentence factual description: what it is, when built or founded, what it contains or why it is famous",
+      "why_visit": "One specific compelling reason to visit this place",
+      "price_eur": 15,
+      "price_note": "Adults standard, what is included",
+      "duration_hours": 2,
+      "category": "museum",
+      "highlight": true
+    }
   ]
 }
 Rules:
-- All monetary values in EUR (convert from local currency approximately if needed)
+- All monetary values in EUR (convert approximately if needed)
 - transit: real public transport prices, null if genuinely unknown
-- hotel_range: typical nightly prices per room -- budget hostel / 3-star / 5-star
-- attractions: up to 20 most-visited attractions/museums/landmarks with real entry prices
-- price_eur: 0 for genuinely free attractions, null only if truly unknown
+- hotel_range: typical nightly prices per room - budget hostel / 3-star / 5-star
+- attractions: EXACTLY 15 entries, ordered by importance (most famous first)
+  PRIORITIZE (in order): world-famous museums, UNESCO World Heritage sites, iconic palaces or castles, major art galleries, ancient ruins or archaeological sites, famous landmarks with views, major parks or gardens, science museums, famous religious buildings (if architecturally exceptional)
+  STRICTLY AVOID: generic war memorials, minor statues, ordinary parks, small local churches, plaques
+  - name: the exact well-known name tourists search for
+  - description: specific facts (founded year, architect, key artworks or exhibits, world records, size)
+  - why_visit: unique angle - what you see or experience that you cannot see anywhere else
+  - price_eur: accurate entry price, 0 if genuinely free, null only if truly unknown
+  - price_note: what adults pay and what is included in that price
+  - duration_hours: realistic visit time (0.5=quick photo stop, 1=brief visit, 2=standard, 3=half day, 4+=full day)
+  - category: exactly one of: museum|palace|church|ancient|gallery|park|landmark|science|nature|zoo|aquarium|viewpoint|market|theatre
+  - highlight: true for the top 5 absolute must-sees, false for the other 10
 - website: real official URL of the city transport authority`
 
     const response = await fetchWithTimeout(GROQ_API_URL, {
@@ -320,7 +337,7 @@ Rules:
           },
         ],
         temperature: 0.1,
-        max_tokens: 2000,
+        max_tokens: 3000,
       }),
     }, 15000)
 
@@ -351,6 +368,49 @@ Rules:
 }
 
 // Enrich OSM attractions with Claude's price knowledge (fuzzy name match)
+// When Groq returns curated attractions, use them as primary list
+// and look up OSM coordinates by name matching
+function buildAttractionsFromKnowledge(knowledgeAttractions, osmElements, destinationGeo) {
+  if (!knowledgeAttractions?.length) return null
+
+  return knowledgeAttractions.slice(0, 15).map((ka) => {
+    // Try to find coordinates in OSM data by name matching
+    const nameLower = (ka.name || '').toLowerCase()
+    const osmMatch = osmElements.find((el) => {
+      const elName = (el.tags?.name || '').toLowerCase()
+      if (!elName) return false
+      if (elName === nameLower) return true
+      if (elName.includes(nameLower.substring(0, 12)) || nameLower.includes(elName.substring(0, 12))) return true
+      // Word-level: any significant word matches
+      return nameLower.split(' ').some((w) => w.length > 5 && elName.includes(w))
+    })
+
+    const point = osmMatch ? coordsOf(osmMatch) : { lat: 0, lng: 0 }
+    const price = ka.price_eur
+
+    return {
+      name: ka.name || 'Atrakcija',
+      description: ka.description || '',
+      why_visit: ka.why_visit || '',
+      price_eur: typeof price === 'number' ? price : null,
+      free: price === 0,
+      price_note: price === 0
+        ? 'Besplatno.'
+        : typeof price === 'number' && price > 0
+          ? `~EUR${price} odrasli${ka.price_note ? ' - ' + ka.price_note : ''}.`
+          : 'Cijena: provjeri online ili na ulazu.',
+      lat: point.lat,
+      lng: point.lng,
+      duration_hours: ka.duration_hours || 1.5,
+      area: destinationGeo.name || '',
+      category: ka.category || 'attraction',
+      highlight: ka.highlight === true,
+      source: 'ai',
+    }
+  }).filter((a) => a.name)
+}
+
+// Fallback: enrich OSM attractions with Groq prices (old behaviour)
 function enrichAttractionsWithPrices(attractions, knowledgeAttractions) {
   if (!knowledgeAttractions?.length) return attractions
   return attractions.map((attraction) => {
@@ -362,7 +422,6 @@ function enrichAttractionsWithPrices(attractions, knowledgeAttractions) {
       const kaLower = (ka.name || '').toLowerCase()
       if (nameLower === kaLower) return true
       if (nameLower.includes(kaLower) || kaLower.includes(nameLower)) return true
-      // Word-level overlap (words > 4 chars)
       return nameLower.split(' ').some((w) => w.length > 4 && kaLower.includes(w))
     })
 
@@ -373,8 +432,8 @@ function enrichAttractionsWithPrices(attractions, knowledgeAttractions) {
       price_eur: match.price_eur,
       free: match.price_eur === 0,
       price_note: match.price_eur === 0
-        ? 'Besplatna atrakcija.'
-        : `~EUR${match.price_eur} odrasli -- ${match.note || 'provjeri trenutnu cijenu na ulazu'}.`,
+        ? 'Besplatno.'
+        : `~EUR${match.price_eur} odrasli -- ${match.price_note || match.note || 'provjeri trenutnu cijenu na ulazu'}.`,
     }
   })
 }
@@ -471,9 +530,8 @@ async function mainLogic(context) {
 
   const countryInfo = await fetchCountryInfo(destinationGeo.countryCode, destinationGeo.country)
 
-  const [weather, attractions, transit, countryEmergency, cityKnowledge] = await Promise.all([
+  const [weather, transit, countryEmergency, cityKnowledge] = await Promise.all([
     fetchWeather(destinationGeo, departDate, returnDate, env),
-    fetchAttractions(destinationGeo),
     fetchTransit(destinationGeo),
     buildEmergencyInfo(countryInfo),
     fetchCityKnowledge(destinationGeo, env),
@@ -513,8 +571,14 @@ async function mainLogic(context) {
   const accommodation = accommodationData?.primary || null
   const accommodationOptions = accommodationData?.options || (accommodation ? [accommodation] : [])
 
-  // Enrich with Claude city knowledge
-  const enrichedAttractions = enrichAttractionsWithPrices(attractions, cityKnowledge.attractions)
+  // Use Groq-curated attractions as primary (with OSM for coordinates)
+  // Fall back to OSM attractions if Groq not available
+  const osmElements = await fetchAttractionElements(destinationGeo)
+  const osmAttractions = buildOsmAttractions(osmElements, destinationGeo)
+  
+  const enrichedAttractions = cityKnowledge.attractions?.length
+    ? (buildAttractionsFromKnowledge(cityKnowledge.attractions, osmElements, destinationGeo) || osmAttractions)
+    : enrichAttractionsWithPrices(osmAttractions, [])
   const enrichedTransit = cityKnowledge.transit
     ? { ...transit, ...cityKnowledge.transit, modes: transit.modes?.length ? transit.modes : cityKnowledge.transit.modes }
     : transit
@@ -1034,22 +1098,40 @@ async function fetchWeatherOpenMeteo(destinationGeo, departDate, returnDate) {
   }
 }
 
-async function fetchAttractions(destinationGeo) {
+async function fetchAttractionElements(destinationGeo) {
   const query = `
 [out:json][timeout:25];
 (
-  nwr(around:7000,${destinationGeo.lat},${destinationGeo.lng})["tourism"~"attraction|museum|gallery|theme_park|aquarium|zoo"];
-  nwr(around:7000,${destinationGeo.lat},${destinationGeo.lng})["historic"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["tourism"="museum"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["tourism"="gallery"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["tourism"="attraction"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["tourism"="theme_park"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["tourism"="aquarium"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["tourism"="zoo"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["historic"="castle"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["historic"="palace"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["historic"="ruins"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["historic"="archaeological_site"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["amenity"="theatre"];
+  nwr(around:8000,${destinationGeo.lat},${destinationGeo.lng})["leisure"="park"]["name"]["wikidata"];
 );
-out center tags 120;
+out center tags 150;
 `
+  return fetchOverpass(query)
+}
 
-  const elements = await fetchOverpass(query)
+function buildOsmAttractions(elements, destinationGeo) {
   return dedupeByNameAndCoords(elements)
     .map((item) => mapAttraction(item, destinationGeo))
-    .filter((item) => item.name)
+    .filter((item) => item.name && item.name.length > 2)
     .sort((a, b) => attractionScore(b) - attractionScore(a))
     .slice(0, 15)
+}
+
+// Keep for backward compat
+async function fetchAttractions(destinationGeo) {
+  const elements = await fetchAttractionElements(destinationGeo)
+  return buildOsmAttractions(elements, destinationGeo)
 }
 
 async function fetchAccommodationCandidates(destinationGeo) {
@@ -1471,6 +1553,7 @@ function mapAttraction(item, destinationGeo) {
   return {
     name,
     description: describeAttraction(tags),
+    why_visit: '',
     price_eur: Number.isFinite(charge) ? charge : null,
     price_total_eur: null,
     free: free || charge === 0,
@@ -1479,15 +1562,33 @@ function mapAttraction(item, destinationGeo) {
     lng: point.lng,
     duration_hours: estimateDuration(tags),
     area: pickArea(tags, destinationGeo),
+    category: osmCategory(tags),
+    highlight: false,
+    source: 'osm',
+    _tags: tags,
   }
 }
 
 function attractionScore(item) {
   let score = 0
-  if (item.area) score += 2
-  if (item.description) score += 2
-  if (item.free || Number.isFinite(item.price_eur)) score += 1
   if (item.name) score += 5
+  if (item.description && item.description.length > 10) score += 3
+  if (item.area) score += 1
+  if (item.free || Number.isFinite(item.price_eur)) score += 2
+  if (item.highlight) score += 10
+  // Reward by category
+  const cat = item.category || ''
+  const tier = { museum: 8, gallery: 7, palace: 7, ancient: 7, science: 6, zoo: 5, aquarium: 5, landmark: 5, viewpoint: 4, park: 3, church: 2 }
+  score += tier[cat] || 0
+  // Reward OSM tourism tag priority
+  const tags = item._tags || {}
+  if (tags.tourism === 'museum') score += 6
+  if (tags.tourism === 'gallery') score += 5
+  if (tags.tourism === 'theme_park' || tags.tourism === 'zoo' || tags.tourism === 'aquarium') score += 4
+  if (tags.tourism === 'attraction') score += 3
+  if (tags.historic === 'castle' || tags.historic === 'palace') score += 5
+  if (tags.historic === 'ruins' || tags.historic === 'archaeological_site') score += 4
+  if (tags.wikidata) score += 3  // Has Wikipedia/Wikidata entry = more notable
   return score
 }
 
@@ -1497,6 +1598,19 @@ function accommodationScore(item, destinationGeo) {
   if (item.tags?.stars) score += toNum(item.tags.stars) || 0
   if (item.tags?.brand) score += 1
   return score
+}
+
+function osmCategory(tags) {
+  if (tags.tourism === 'museum') return 'museum'
+  if (tags.tourism === 'gallery') return 'gallery'
+  if (tags.tourism === 'theme_park') return 'park'
+  if (tags.tourism === 'aquarium') return 'aquarium'
+  if (tags.tourism === 'zoo') return 'zoo'
+  if (tags.historic === 'castle' || tags.historic === 'palace') return 'palace'
+  if (tags.historic === 'ruins' || tags.historic === 'archaeological_site') return 'ancient'
+  if (tags.amenity === 'theatre') return 'theatre'
+  if (tags.leisure === 'park') return 'park'
+  return 'landmark'
 }
 
 function readableAttractionType(tags) {

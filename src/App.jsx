@@ -1009,42 +1009,89 @@ function AccommodationCard({ data, options, form, totalPeople }) {
 
 function AttractionsCard({ data, form }) {
   if (!data || !data.length) return null
+
+  const catEmoji = {
+    museum: '🏛️', gallery: '🖼️', palace: '🏰', ancient: '🏺', church: '⛪',
+    science: '🔬', zoo: '🦁', aquarium: '🐠', park: '🌿', landmark: '📍',
+    viewpoint: '🔭', market: '🛍️', theatre: '🎭', nature: '🌲', attraction: '🎯',
+  }
+
   const withPrice = data.filter(a => a.free || (typeof a.price_eur === 'number' && Number.isFinite(a.price_eur))).length
+  const highlights = data.filter(a => a.highlight)
+
   return (
     <div className="card">
       <div className="section-title">🎯 Must See — top {data.length}</div>
-      {withPrice > 0 && (
-        <div className="text-white/50 text-sm mb-4">
-          Cijene su okvirne (odrasli). Uvijek provjeri najnovije cijene na zvaničnom sajtu atrakcije.
+
+      {/* Highlight strip */}
+      {highlights.length > 0 && (
+        <div className="mb-4">
+          <div className="text-white/40 text-xs uppercase tracking-wide mb-2">Apsolutni must-see</div>
+          <div className="flex flex-wrap gap-2">
+            {highlights.map((a, i) => (
+              <span key={i} className="bg-accent-500/20 border border-accent-500/40 text-accent-400 text-xs font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5">
+                {catEmoji[a.category] || '⭐'} {a.name}
+              </span>
+            ))}
+          </div>
         </div>
       )}
+
+      {withPrice > 0 && (
+        <div className="text-white/40 text-xs mb-4">Cijene su okvirne za odrasle. Uvijek provjeri na zvanicnom sajtu atrakcije.</div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {data.map((a, i) => {
           const isFree = a.free || a.price_eur === 0
           const hasPrice = typeof a.price_eur === 'number' && Number.isFinite(a.price_eur) && a.price_eur > 0
+          const emoji = catEmoji[a.category] || '🎯'
           return (
-            <div key={i} className="bg-ink-900/50 rounded-xl p-4 border border-white/5 flex flex-col">
+            <div key={i} className={`rounded-xl p-4 border flex flex-col ${a.highlight ? 'border-accent-500/30 bg-accent-500/5' : 'border-white/5 bg-ink-900/50'}`}>
+              {/* Header */}
               <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="font-semibold text-white leading-tight">{i + 1}. {a.name}</div>
+                <div className="flex items-start gap-2 min-w-0">
+                  <span className="text-lg flex-shrink-0 mt-0.5">{emoji}</span>
+                  <div className="font-semibold text-white leading-tight text-sm">{i + 1}. {a.name}</div>
+                </div>
                 {isFree ? (
-                  <span className="flex-shrink-0 bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-xs font-bold px-2 py-0.5 rounded-full">BESPLATNO</span>
+                  <span className="flex-shrink-0 bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap">BESPLATNO</span>
                 ) : hasPrice ? (
-                  <span className="flex-shrink-0 bg-accent-500/20 border border-accent-500/30 text-accent-400 text-xs font-bold px-2 py-0.5 rounded-full">~€{a.price_eur}</span>
-                ) : (
-                  <span className="flex-shrink-0 bg-white/5 border border-white/10 text-white/40 text-xs px-2 py-0.5 rounded-full">cijena n/a</span>
+                  <span className="flex-shrink-0 bg-accent-500/20 border border-accent-500/30 text-accent-400 text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap">~€{a.price_eur}</span>
+                ) : null}
+              </div>
+
+              {/* Description */}
+              {a.description && (
+                <p className="text-white/65 text-xs leading-relaxed mb-2 flex-grow">{a.description}</p>
+              )}
+
+              {/* Why visit */}
+              {a.why_visit && (
+                <div className="flex gap-1.5 mb-2">
+                  <span className="text-accent-400 text-xs flex-shrink-0">✦</span>
+                  <p className="text-accent-400/80 text-xs italic leading-snug">{a.why_visit}</p>
+                </div>
+              )}
+
+              {/* Meta chips */}
+              <div className="flex flex-wrap gap-1.5 mt-auto">
+                {a.area && <span className="chip text-[10px]">📍 {a.area}</span>}
+                {a.duration_hours ? <span className="chip text-[10px]">⏱️ {a.duration_hours}h</span> : null}
+                {a.category && a.category !== 'attraction' && a.category !== 'landmark' && (
+                  <span className="chip text-[10px]">{emoji} {a.category}</span>
                 )}
               </div>
-              {a.description && <p className="text-white/60 text-sm flex-grow">{a.description}</p>}
-              <div className="flex flex-wrap gap-2 mt-2">
-                {a.area && <span className="chip text-xs">📍 {a.area}</span>}
-                {a.duration_hours ? <span className="chip text-xs">⏱️ {a.duration_hours}h</span> : null}
-              </div>
+
+              {/* Price note */}
               {a.price_note && (
-                <div className={`text-xs mt-2 ${isFree ? 'text-emerald-400/70' : hasPrice ? 'text-accent-400/70' : 'text-white/35'}`}>
+                <div className={`text-[10px] mt-1.5 ${isFree ? 'text-emerald-400/60' : hasPrice ? 'text-accent-400/60' : 'text-white/30'}`}>
                   {a.price_note}
                 </div>
               )}
-              <a href={URLS.placeSearch(a.name, form.destination)} target="_blank" rel="noreferrer" className="text-sky-400 hover:text-sky-300 text-xs mt-2 inline-block no-print">
+
+              <a href={URLS.placeSearch(a.name, form.destination, a.lat, a.lng)} target="_blank" rel="noreferrer"
+                className="text-sky-400 hover:text-sky-300 text-[10px] mt-2 inline-block no-print">
                 🗺️ Otvori na mapi →
               </a>
             </div>
