@@ -54,10 +54,61 @@ async function reverseGeocode(lat, lng) {
   }
 }
 
+// Izvuci samo naziv grada (prije zareza)
+const cityOnly = (str) => str ? str.split(',')[0].trim() : ''
+// Slug za URL (lowercase, razmaci -> crtice)
+const citySlug = (str) => cityOnly(str).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+
+// Centralni generator linkova za sve vidove prevoza
+function buildLinks(form) {
+  const from     = cityOnly(form.origin)
+  const to       = cityOnly(form.destination)
+  const fromFull = form.origin || from
+  const toFull   = form.destination || to
+  const fromSlug = citySlug(form.origin)
+  const toSlug   = citySlug(form.destination)
+  const dep      = form.departDate
+  const ret      = form.returnDate
+  const adults   = form.adults || 2
+  const children = form.children || 0
+
+  return {
+    // === LETOVI ===
+    googleFlights: `https://www.google.com/travel/flights?q=${encodeURIComponent(`flights from ${from} to ${to} on ${dep} returning ${ret} ${adults} adults${children ? ' ' + children + ' children' : ''}`)}`,
+
+    kiwi: `https://www.kiwi.com/en/search/results/${encodeURIComponent(fromSlug)}/${encodeURIComponent(toSlug)}/${dep}/${ret}?adults=${adults}&children=${children}&infants=0&cabinClass=economy`,
+
+    kayak: `https://www.kayak.com/flights/${encodeURIComponent(from)}-${encodeURIComponent(to)}/${dep}/${ret}/${adults}adults${children ? '/' + children + 'children' : ''}`,
+
+    momondo: `https://www.momondo.com/flight-search/${encodeURIComponent(from)}/${encodeURIComponent(to)}/${dep}/${ret}/?adults=${adults}&children=${children}`,
+
+    // === AUTO ===
+    googleMaps: `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(fromFull)}&destination=${encodeURIComponent(toFull)}&travelmode=driving`,
+
+    googleMapsNamed: `https://www.google.com/maps/dir/${encodeURIComponent(fromFull)}/${encodeURIComponent(toFull)}`,
+
+    waze: `https://www.waze.com/live-map/directions?from=${encodeURIComponent(fromFull)}&to=${encodeURIComponent(toFull)}`,
+
+    // === AUTOBUS ===
+    flixbus: `https://www.flixbus.com/bus-tickets/${fromSlug}-${toSlug}`,
+
+    omio_bus: `https://www.omio.com/results?origin=${encodeURIComponent(from)}&destination=${encodeURIComponent(to)}&outboundDate=${dep}&returnDate=${ret}&passengers=${adults + children}&transportModes=bus`,
+
+    rome2rio: `https://www.rome2rio.com/s/${encodeURIComponent(from)}/${encodeURIComponent(to)}`,
+
+    busbud: `https://www.busbud.com/en/bus/${fromSlug}/${toSlug}`,
+
+    // === VOZ ===
+    omio_train: `https://www.omio.com/results?origin=${encodeURIComponent(from)}&destination=${encodeURIComponent(to)}&outboundDate=${dep}&returnDate=${ret}&passengers=${adults + children}&transportModes=train`,
+
+    trainline: `https://www.thetrainline.com/book/results?origin=${encodeURIComponent(from)}&destination=${encodeURIComponent(to)}&outwardDate=${dep}T00%3A00%3A00&returnDate=${ret}T00%3A00%3A00&adults=${adults}&children=${children}`,
+
+    raileurope: `https://www.raileurope.com/en/search?origin=${encodeURIComponent(from)}&destination=${encodeURIComponent(to)}&outwardDate=${dep}&returnDate=${ret}&adults=${adults}&children=${children}`,
+  }
+}
+
 const URLS = {
-  googleFlights: (f) => `https://www.google.com/travel/flights?q=${encodeURIComponent(
-    `flights from ${f.origin} to ${f.destination} on ${f.departDate} returning ${f.returnDate} ${f.adults} adults${f.children ? ' ' + f.children + ' children' : ''}`
-  )}`,
+  googleFlights: (f) => buildLinks(f).googleFlights,
   booking: (f) => `https://www.booking.com/searchresults.html?${new URLSearchParams({
     ss: f.destination, checkin: f.departDate, checkout: f.returnDate,
     group_adults: String(f.adults), group_children: String(f.children),
@@ -67,21 +118,14 @@ const URLS = {
     checkin: f.departDate, checkout: f.returnDate,
     adults: String(f.adults), children: String(f.children),
   })}`,
-  googleMaps: (f) => `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(f.origin)}&destination=${encodeURIComponent(f.destination)}&travelmode=driving`,
-  flixbus: (f) => `https://global.flixbus.com/search?${new URLSearchParams({
-    departureCity: f.origin, arrivalCity: f.destination, rideDate: f.departDate,
-  })}`,
-  omio: (f) => `https://www.omio.com/search-frontend?${new URLSearchParams({
-    from: f.origin, to: f.destination, departureDate: f.departDate, returnDate: f.returnDate,
-  })}`,
-  // Koristi koordinate ako postoje, inace Google Maps pretraga po imenu+gradu
+  googleMaps: (f) => buildLinks(f).googleMaps,
   placeSearch: (name, destination, lat, lng) => {
     if (lat && lng && lat !== 0 && lng !== 0) {
       return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
     }
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name + ', ' + destination)}`
   },
-  momondo: (f) => `https://www.momondo.com/flight-search/${encodeURIComponent(f.origin)}/${encodeURIComponent(f.destination)}/${f.departDate}/${f.returnDate}/?adults=${f.adults}&children=${f.children || 0}`,
+  momondo: (f) => buildLinks(f).momondo,
   chainOfficial: {
     "McDonald's": 'https://www.mcdonalds.com/',
     'KFC': 'https://global.kfc.com/',
@@ -556,19 +600,30 @@ function TransportCard({ plan, form, totalPeople }) {
             Pretražuj live letove na više platformi — cijene se ažuriraju u realnom vremenu:
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 no-print">
-            {(plan.flight_search_links || [
-              { name: 'Google Flights', url: URLS.googleFlights(form), emoji: '🔍' },
-              { name: 'Kiwi.com', url: `https://www.kiwi.com/en/search/results/${encodeURIComponent(form.origin)}/${encodeURIComponent(form.destination)}/${form.departDate}/${form.returnDate}?adults=${form.adults}`, emoji: '🥝' },
-              { name: 'Kayak', url: `https://www.kayak.com/flights/${encodeURIComponent(form.origin)}-${encodeURIComponent(form.destination)}/${form.departDate}/${form.returnDate}/${form.adults}adults`, emoji: '🛩️' },
-              { name: 'Momondo', url: URLS.momondo(form), emoji: '🌐' },
-            ]).map((link) => (
-              <a key={link.name} href={link.url} target="_blank" rel="noreferrer"
-                className="flex flex-col items-center gap-2 bg-ink-900/50 hover:bg-accent-500/20 border border-white/10 hover:border-accent-500/40 rounded-xl p-4 transition-all group text-center">
-                <span className="text-2xl">{link.emoji}</span>
-                <span className="text-white font-semibold text-sm group-hover:text-accent-400 transition-colors">{link.name}</span>
-                <span className="text-white/40 text-xs">Otvori →</span>
-              </a>
-            ))}
+            {(() => {
+              const L = buildLinks(form)
+              const links = plan.flight_search_links?.length ? plan.flight_search_links.map(l => ({
+                ...l,
+                url: l.name === 'Google Flights' ? L.googleFlights
+                   : l.name === 'Kiwi.com' ? L.kiwi
+                   : l.name === 'Kayak' ? L.kayak
+                   : l.name === 'Momondo' ? L.momondo
+                   : l.url
+              })) : [
+                { name: 'Google Flights', url: L.googleFlights, emoji: '✈️' },
+                { name: 'Kiwi.com',       url: L.kiwi,          emoji: '🥝' },
+                { name: 'Kayak',          url: L.kayak,          emoji: '🛩️' },
+                { name: 'Momondo',        url: L.momondo,        emoji: '🌐' },
+              ]
+              return links.map((link) => (
+                <a key={link.name} href={link.url} target="_blank" rel="noreferrer"
+                  className="flex flex-col items-center gap-2 bg-ink-900/50 hover:bg-accent-500/20 border border-white/10 hover:border-accent-500/40 rounded-xl p-4 transition-all group text-center">
+                  <span className="text-2xl">{link.emoji}</span>
+                  <span className="text-white font-semibold text-sm group-hover:text-accent-400 transition-colors">{link.name}</span>
+                  <span className="text-white/40 text-xs">{cityOnly(form.origin)} → {cityOnly(form.destination)}</span>
+                </a>
+              ))
+            })()}
           </div>
           <div className="bg-ink-900/30 border border-white/5 rounded-xl p-4 text-sm text-white/60">
             <span className="text-white/80 font-semibold">💡 Savjet:</span> Kiwi.com često pronalazi kombinovane letove koji su jeftiniji. Poredjaj po cijeni, pa provjeri na Google Flights za direktne opcije.
@@ -594,40 +649,60 @@ function TransportCard({ plan, form, totalPeople }) {
 }
 
 function ExternalSearchButtons({ form, mode }) {
+  const L = buildLinks(form)
+  const from = cityOnly(form.origin)
+  const to = cityOnly(form.destination)
+  const label = `${from} → ${to}`
+
   if (mode === 'plane') return (
-    <a href={URLS.googleFlights(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🔎 Google Flights →</a>
+    <div className="flex flex-wrap gap-2">
+      <LinkBtn href={L.googleFlights} primary>✈️ Google Flights</LinkBtn>
+      <LinkBtn href={L.kiwi}>🥝 Kiwi.com</LinkBtn>
+      <LinkBtn href={L.kayak}>🛩️ Kayak</LinkBtn>
+      <LinkBtn href={L.momondo}>🌐 Momondo</LinkBtn>
+      <div className="w-full text-white/40 text-xs mt-1">{label} • {form.departDate} – {form.returnDate} • {form.adults + form.children} putnika</div>
+    </div>
   )
+
   if (mode === 'car') return (
-    <a href={URLS.googleMaps(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🗺️ Google Maps ruta →</a>
+    <div className="flex flex-wrap gap-2">
+      <LinkBtn href={L.googleMaps} primary>🗺️ Google Maps ruta</LinkBtn>
+      <LinkBtn href={L.waze}>📍 Waze</LinkBtn>
+      <LinkBtn href={L.rome2rio}>🔍 Rome2Rio</LinkBtn>
+      <div className="w-full text-white/40 text-xs mt-1">{label}</div>
+    </div>
   )
-  if (mode === 'bus') {
-    const origin = form.origin.split(',')[0].trim()
-    const destination = form.destination.split(',')[0].trim()
-    const flixbus = `https://www.flixbus.com/bus-tickets/${encodeURIComponent(origin.toLowerCase())}-${encodeURIComponent(destination.toLowerCase())}`
-    const omio = `https://www.omio.com/results?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&outboundDate=${form.departDate}&returnDate=${form.returnDate}&passengers=${form.adults}`
-    const rome2rio = `https://www.rome2rio.com/s/${encodeURIComponent(origin)}/${encodeURIComponent(destination)}`
-    const busbud = `https://www.busbud.com/en/bus-${encodeURIComponent(origin.toLowerCase())}-${encodeURIComponent(destination.toLowerCase())}`
-    return (
-      <div className="flex flex-wrap gap-2">
-        <a href={flixbus} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🚌 FlixBus →</a>
-        <a href={omio} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🎟️ Omio →</a>
-        <a href={rome2rio} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🗺️ Rome2Rio →</a>
-        <a href={busbud} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🔎 BusBud →</a>
-      </div>
-    )
-  }
-  if (mode === 'train') {
-    const origin = form.origin.split(',')[0].trim()
-    const destination = form.destination.split(',')[0].trim()
-    const omio = `https://www.omio.com/results?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&outboundDate=${form.departDate}&returnDate=${form.returnDate}&passengers=${form.adults}&transportModes=train`
-    return (
-      <div className="flex flex-wrap gap-2">
-        <a href={omio} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🎟️ Omio →</a>
-        <a href={`https://www.rome2rio.com/s/${encodeURIComponent(origin)}/${encodeURIComponent(destination)}`} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🗺️ Rome2Rio →</a>
-      </div>
-    )
-  }
+
+  if (mode === 'bus') return (
+    <div className="flex flex-wrap gap-2">
+      <LinkBtn href={L.flixbus} primary>🚌 FlixBus</LinkBtn>
+      <LinkBtn href={L.omio_bus}>🎟️ Omio</LinkBtn>
+      <LinkBtn href={L.rome2rio}>🗺️ Rome2Rio</LinkBtn>
+      <LinkBtn href={L.busbud}>🔎 BusBud</LinkBtn>
+      <div className="w-full text-white/40 text-xs mt-1">{label} • {form.departDate}</div>
+    </div>
+  )
+
+  if (mode === 'train') return (
+    <div className="flex flex-wrap gap-2">
+      <LinkBtn href={L.omio_train} primary>🎟️ Omio</LinkBtn>
+      <LinkBtn href={L.trainline}>🚆 Trainline</LinkBtn>
+      <LinkBtn href={L.raileurope}>🚄 Rail Europe</LinkBtn>
+      <LinkBtn href={L.rome2rio}>🗺️ Rome2Rio</LinkBtn>
+      <div className="w-full text-white/40 text-xs mt-1">{label} • {form.departDate} – {form.returnDate}</div>
+    </div>
+  )
+
   return null
+}
+
+function LinkBtn({ href, children, primary }) {
+  return (
+    <a href={href} target="_blank" rel="noreferrer"
+      className={`text-sm font-semibold rounded-lg px-4 py-2 transition-colors ${primary ? 'bg-accent-500 hover:bg-accent-400 text-white' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
+      {children} →
+    </a>
+  )
 }
 
 function FlightsCard({ data, form, totalPeople }) {
@@ -655,9 +730,17 @@ function FlightsCard({ data, form, totalPeople }) {
         ))}
       </ul>
       <div className="mt-4 pt-4 border-t border-white/5 flex flex-wrap gap-2 no-print">
-        <a href={URLS.googleFlights(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
-          🔎 Traži letove na Google Flights →
-        </a>
+        {[
+          { name: 'Google Flights', href: buildLinks(form).googleFlights },
+          { name: 'Kiwi.com',       href: buildLinks(form).kiwi },
+          { name: 'Kayak',          href: buildLinks(form).kayak },
+          { name: 'Momondo',        href: buildLinks(form).momondo },
+        ].map((s, i) => (
+          <a key={s.name} href={s.href} target="_blank" rel="noreferrer"
+            className={`text-sm font-semibold rounded-lg px-4 py-2 transition-colors ${i === 0 ? 'bg-accent-500 hover:bg-accent-400 text-white' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
+            {s.name} →
+          </a>
+        ))}
       </div>
     </div>
   )
@@ -718,8 +801,11 @@ function CarRouteCard({ data, form }) {
       )}
       {data.tips && <p className="text-white/70 text-sm pt-3 border-t border-white/5">💡 {data.tips}</p>}
       <div className="mt-4 pt-4 border-t border-white/5 flex flex-wrap gap-2 no-print">
-        <a href={URLS.googleMaps(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+        <a href={buildLinks(form).googleMaps} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
           🗺️ Otvori rutu na Google Maps →
+        </a>
+        <a href={buildLinks(form).waze} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+          📍 Waze →
         </a>
       </div>
     </div>

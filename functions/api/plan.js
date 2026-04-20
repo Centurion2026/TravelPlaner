@@ -301,7 +301,7 @@ Rules:
 - price_eur: 0 for genuinely free attractions, null only if truly unknown
 - website: real official URL of the city transport authority`
 
-    const response = await fetch(GROQ_API_URL, {
+    const response = await fetchWithTimeout(GROQ_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -322,7 +322,7 @@ Rules:
         temperature: 0.1,
         max_tokens: 2000,
       }),
-    })
+    }, 15000)
 
     if (!response.ok) {
       console.error('Groq API error:', response.status, await response.text())
@@ -415,7 +415,7 @@ export async function onRequestGet(context) {
 }
 
 export async function onRequestPost(context) {
-  const DEADLINE_MS = 30000
+  const DEADLINE_MS = 60000
 
   try {
     const result = await Promise.race([
@@ -425,8 +425,8 @@ export async function onRequestPost(context) {
 
     if (result?.__timeout) {
       return json({
-        error: 'Vremenski limit je prekoracen (30s).',
-        hint: 'Pokusaj ponovo za minut.',
+        error: 'Vremenski limit je prekoracen (60s).',
+        hint: 'Pokusaj ponovo - serveri su mozda bili zauzeti.',
       }, 504)
     }
 
@@ -1585,16 +1585,36 @@ function buildItinerary(attractions, departDate, days) {
   }))
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const resp = await fetch(url, { ...options, signal: controller.signal })
+    clearTimeout(timer)
+    return resp
+  } catch (err) {
+    clearTimeout(timer)
+    throw err
+  }
+}
+
 function buildFlightSearchLinks({ origin, destination, departDate, returnDate, adults, children }) {
-  const pax = `${adults} odrasl${adults === 1 ? 'a' : 'e'} osob${adults === 1 ? 'a' : 'e'}${children > 0 ? ` + ${children} djece` : ''}`
-  const gf = `https://www.google.com/travel/flights?q=${encodeURIComponent(`flights from ${origin} to ${destination} on ${departDate} returning ${returnDate}`)}`
-  const kiwi = `https://www.kiwi.com/en/search/results/${encodeURIComponent(origin)}/${encodeURIComponent(destination)}/${departDate}/${returnDate}?adults=${adults}&children=${children}`
-  const kayak = `https://www.kayak.com/flights/${encodeURIComponent(origin)}-${encodeURIComponent(destination)}/${departDate}/${returnDate}/${adults}adults${children > 0 ? `/${children}children` : ''}`
-  const momondo = `https://www.momondo.com/flight-search/${encodeURIComponent(origin)}/${encodeURIComponent(destination)}/${departDate}/${returnDate}/?adults=${adults}&children=${children || 0}`
+  const from     = (origin || '').split(',')[0].trim()
+  const to       = (destination || '').split(',')[0].trim()
+  const fromSlug = from.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+  const toSlug   = to.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+  const pax      = adults || 2
+  const ch       = children || 0
+
+  const gf      = `https://www.google.com/travel/flights?q=${encodeURIComponent(`flights from ${from} to ${to} on ${departDate} returning ${returnDate} ${pax} adults${ch ? ' ' + ch + ' children' : ''}`)}`
+  const kiwi    = `https://www.kiwi.com/en/search/results/${encodeURIComponent(fromSlug)}/${encodeURIComponent(toSlug)}/${departDate}/${returnDate}?adults=${pax}&children=${ch}&infants=0&cabinClass=economy`
+  const kayak   = `https://www.kayak.com/flights/${encodeURIComponent(from)}-${encodeURIComponent(to)}/${departDate}/${returnDate}/${pax}adults${ch ? '/' + ch + 'children' : ''}`
+  const momondo = `https://www.momondo.com/flight-search/${encodeURIComponent(from)}/${encodeURIComponent(to)}/${departDate}/${returnDate}/?adults=${pax}&children=${ch}`
+
   return [
-    { name: 'Google Flights', url: gf, emoji: 'GF' },
-    { name: 'Kiwi.com',       url: kiwi, emoji: 'KW' },
-    { name: 'Kayak',          url: kayak, emoji: 'KY' },
+    { name: 'Google Flights', url: gf,      emoji: 'GF' },
+    { name: 'Kiwi.com',       url: kiwi,    emoji: 'KW' },
+    { name: 'Kayak',          url: kayak,   emoji: 'KY' },
     { name: 'Momondo',        url: momondo, emoji: 'MM' },
   ]
 }
