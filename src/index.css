@@ -126,6 +126,7 @@ body.light .bg-ink-800 .text-white           { color: #1e2a4a !important; }
 body.light .bg-ink-800 .text-white\/90       { color: #2d3a56 !important; }
 body.light .bg-ink-800 .text-white\/80       { color: #374151 !important; }
 body.light .bg-ink-800 .text-white\/70       { color: #4b5563 !important; }
+body.light .bg-ink-800 .text-white\/75       { color: #4b5563 !important; }
 body.light .bg-ink-800 .text-white\/65       { color: #6b7280 !important; }
 body.light .bg-ink-800 .text-white\/60       { color: #6b7280 !important; }
 body.light .bg-ink-800 .text-white\/50       { color: #9ca3af !important; }
@@ -141,7 +142,17 @@ body.light .bg-ink-800 .border-white\/10     { border-color: rgba(0,0,0,0.09) !i
 body.light .bg-ink-800 .chip                 { background: rgba(0,0,0,0.05) !important; border-color: rgba(0,0,0,0.1) !important; color: #374151 !important; }
 body.light .bg-ink-800 .hover\:bg-white\/10:hover { background-color: rgba(0,0,0,0.06) !important; }
 
-/* Scrollbar */
+/* Catch-all: any remaining white text inside modal */
+body.light .bg-ink-800 p,
+body.light .bg-ink-800 li,
+body.light .bg-ink-800 span:not(.text-accent-400):not(.text-accent-500):not(.text-sky-400):not(.text-emerald-400):not(.text-amber-400):not(.text-rose-400):not(.text-sky-300):not(.text-emerald-300) {
+  color: inherit;
+}
+body.light .bg-ink-800 { color: #374151; }
+
+/* Step number circles in About modal */
+body.light .bg-ink-800 .bg-accent-500\/30 { background-color: rgba(239,107,31,0.18) !important; }
+body.light .bg-ink-800 .border-accent-500\/50 { border-color: rgba(239,107,31,0.4) !important; }
 body.light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15) !important; }
 body.light ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25) !important; }
 

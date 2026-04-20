@@ -473,7 +473,7 @@ function Results({ plan, form, totalPeople }) {
       <ItineraryCard data={plan.itinerary} attractions={plan.attractions} />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 avoid-break">
         <TransitCard data={plan.transit} />
-        <WeatherCard data={plan.weather} />
+        <WeatherCard data={plan.weather} destination={form.destination} />
       </div>
       <FoodCard data={plan.food} form={form} />
       <ChainRestaurantsCard data={plan.chain_restaurants} form={form} />
@@ -594,10 +594,39 @@ function TransportCard({ plan, form, totalPeople }) {
 }
 
 function ExternalSearchButtons({ form, mode }) {
-  if (mode === 'plane') return <a href={URLS.googleFlights(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🔎 Google Flights →</a>
-  if (mode === 'car') return <a href={URLS.googleMaps(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🗺️ Google Maps ruta →</a>
-  if (mode === 'bus') return <a href={URLS.flixbus(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🔎 FlixBus →</a>
-  if (mode === 'train') return <a href={URLS.omio(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🔎 Omio →</a>
+  if (mode === 'plane') return (
+    <a href={URLS.googleFlights(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🔎 Google Flights →</a>
+  )
+  if (mode === 'car') return (
+    <a href={URLS.googleMaps(form)} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🗺️ Google Maps ruta →</a>
+  )
+  if (mode === 'bus') {
+    const origin = form.origin.split(',')[0].trim()
+    const destination = form.destination.split(',')[0].trim()
+    const flixbus = `https://www.flixbus.com/bus-tickets/${encodeURIComponent(origin.toLowerCase())}-${encodeURIComponent(destination.toLowerCase())}`
+    const omio = `https://www.omio.com/results?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&outboundDate=${form.departDate}&returnDate=${form.returnDate}&passengers=${form.adults}`
+    const rome2rio = `https://www.rome2rio.com/s/${encodeURIComponent(origin)}/${encodeURIComponent(destination)}`
+    const busbud = `https://www.busbud.com/en/bus-${encodeURIComponent(origin.toLowerCase())}-${encodeURIComponent(destination.toLowerCase())}`
+    return (
+      <div className="flex flex-wrap gap-2">
+        <a href={flixbus} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🚌 FlixBus →</a>
+        <a href={omio} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🎟️ Omio →</a>
+        <a href={rome2rio} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🗺️ Rome2Rio →</a>
+        <a href={busbud} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🔎 BusBud →</a>
+      </div>
+    )
+  }
+  if (mode === 'train') {
+    const origin = form.origin.split(',')[0].trim()
+    const destination = form.destination.split(',')[0].trim()
+    const omio = `https://www.omio.com/results?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&outboundDate=${form.departDate}&returnDate=${form.returnDate}&passengers=${form.adults}&transportModes=train`
+    return (
+      <div className="flex flex-wrap gap-2">
+        <a href={omio} target="_blank" rel="noreferrer" className="bg-accent-500 hover:bg-accent-400 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🎟️ Omio →</a>
+        <a href={`https://www.rome2rio.com/s/${encodeURIComponent(origin)}/${encodeURIComponent(destination)}`} target="_blank" rel="noreferrer" className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-lg px-4 py-2 transition-colors">🗺️ Rome2Rio →</a>
+      </div>
+    )
+  }
   return null
 }
 
@@ -1061,7 +1090,7 @@ function TransitCard({ data }) {
   )
 }
 
-function WeatherCard({ data }) {
+function WeatherCard({ data, destination }) {
   if (!data) return null
 
   const weekdays = ['Ned', 'Pon', 'Uto', 'Sri', 'Cet', 'Pet', 'Sub']
@@ -1090,6 +1119,7 @@ function WeatherCard({ data }) {
     <div className="card">
       <div className="section-title">
         🌤️ Vrijeme i garderoba
+        {destination && <span className="text-white/50 text-sm font-normal">— {destination.split(',')[0]}</span>}
         <span className="chip text-[10px]">{data.source}</span>
       </div>
 
