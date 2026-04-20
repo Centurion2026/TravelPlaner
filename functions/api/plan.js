@@ -220,6 +220,7 @@ const HOTEL_PRICE_RANGES_DB = {
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
 const GROQ_MODEL = 'llama-3.3-70b-versatile'
+const GROQ_MODEL_FALLBACK = 'llama-3.1-8b-instant'
 
 // --- Helper: normalize city key ----------------------------------------------
 function normalizeCityKey(text) {
@@ -270,33 +271,40 @@ async function fetchCityKnowledge(destinationGeo, env) {
 
   const cityName = destinationGeo.displayName || destinationGeo.name || 'Unknown'
 
-  // Helper: single Groq call
+  // Helper: Groq call with fallback model
   const groqCall = async (prompt, maxTokens) => {
-    try {
-      const resp = await fetchWithTimeout(GROQ_API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-        body: JSON.stringify({
-          model: GROQ_MODEL,
-          messages: [
-            { role: 'system', content: 'Travel data API. Respond with valid JSON only. No markdown.' },
-            { role: 'user', content: prompt },
-          ],
-          temperature: 0.1,
-          max_tokens: maxTokens,
-        }),
-      }, 17000)
-      if (!resp.ok) { console.error('Groq error:', resp.status); return null }
-      const groqLimits = {
-        remainingRequests: resp.headers.get('x-ratelimit-remaining-requests'),
-        remainingTokens: resp.headers.get('x-ratelimit-remaining-tokens'),
-        limitTokens: resp.headers.get('x-ratelimit-limit-tokens'),
-        resetTokens: resp.headers.get('x-ratelimit-reset-tokens'),
-      }
-      const data = await resp.json()
-      const text = (data.choices?.[0]?.message?.content || '').replace(/```json\n?|\n?```/g, '').trim()
-      try { return { parsed: JSON.parse(text), groqLimits } } catch { return null }
-    } catch (e) { console.error('groqCall error:', e?.message); return null }
+    const models = [GROQ_MODEL, GROQ_MODEL_FALLBACK]
+    for (const model of models) {
+      try {
+        const resp = await fetchWithTimeout(GROQ_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: 'Travel data API. Respond with valid JSON only. No markdown.' },
+              { role: 'user', content: prompt },
+            ],
+            temperature: 0.1,
+            max_tokens: maxTokens,
+          }),
+        }, 17000)
+        if (!resp.ok) {
+          console.error('Groq model', model, 'error:', resp.status)
+          continue
+        }
+        const groqLimits = {
+          remainingRequests: resp.headers.get('x-ratelimit-remaining-requests'),
+          remainingTokens: resp.headers.get('x-ratelimit-remaining-tokens'),
+          limitTokens: resp.headers.get('x-ratelimit-limit-tokens'),
+          resetTokens: resp.headers.get('x-ratelimit-reset-tokens'),
+        }
+        const data = await resp.json()
+        const text = (data.choices?.[0]?.message?.content || '').replace(/```json\n?|\n?```/g, '').trim()
+        try { return { parsed: JSON.parse(text), groqLimits } } catch { continue }
+      } catch (e) { console.error('groqCall error model', model, e?.message); continue }
+    }
+    return null
   }
 
   // CALL 1 (core): city_info + transit + hotel + attractions
