@@ -514,17 +514,15 @@ async function mainLogic(context) {
     return json({ error: 'Destinacija nije pronadjena. Pokusaj unijeti grad i drzavu, npr. Rim, Italija.' }, 404)
   }
 
-  const [countryInfo, [weather, transit, cityKnowledge, osmElements]] = await Promise.all([
-    fetchCountryInfo(destinationGeo.countryCode, destinationGeo.country),
-    Promise.all([
-      fetchWeather(destinationGeo, departDate, returnDate, env),
-      fetchTransit(destinationGeo),
-      fetchCityKnowledge(destinationGeo, env),
-      fetchAttractionElements(destinationGeo),
-    ]),
-  ])
+  const countryInfo = await fetchCountryInfo(destinationGeo.countryCode, destinationGeo.country)
 
-  const countryEmergency = await buildEmergencyInfo(countryInfo)
+  const [weather, transit, countryEmergency, cityKnowledge, osmElements] = await Promise.all([
+    fetchWeather(destinationGeo, departDate, returnDate, env),
+    fetchTransit(destinationGeo),
+    buildEmergencyInfo(countryInfo),
+    fetchCityKnowledge(destinationGeo, env),
+    fetchAttractionElements(destinationGeo),
+  ])
 
   // Build curated attraction list: Groq primary, OSM for coordinates/fallback
   const osmAttractions = buildOsmAttractions(osmElements, destinationGeo)

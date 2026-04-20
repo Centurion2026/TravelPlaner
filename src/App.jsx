@@ -1,5 +1,26 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Component } from 'react'
 import MapView from './MapView.jsx'
+
+// Error boundary - catches React render errors and shows them instead of blank screen
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null } }
+  static getDerivedStateFromError(error) { return { error } }
+  componentDidCatch(error, info) { console.error('React crash:', error, info) }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{padding:'2rem',background:'#fee2e2',borderRadius:'1rem',margin:'2rem',color:'#991b1b'}}>
+          <strong>Greška pri prikazu</strong>
+          <pre style={{fontSize:'12px',marginTop:'8px',whiteSpace:'pre-wrap'}}>{this.state.error?.message}</pre>
+          <button onClick={() => this.setState({ error: null })} style={{marginTop:'8px',padding:'4px 12px',background:'#ef4444',color:'white',border:'none',borderRadius:'6px',cursor:'pointer'}}>
+            Pokušaj ponovo
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 const today = new Date()
 const iso = (d) => d.toISOString().slice(0, 10)
@@ -455,7 +476,7 @@ export default function App() {
           {isStale && !loading && <StaleBanner onRefresh={handleSubmit} />}
           {plan?._partial_failures?.length > 0 && !loading && <PartialWarning plan={plan} />}
         </div>
-        {plan && <Results plan={plan} form={planForm || form} totalPeople={(planForm || form).adults + (planForm || form).children} holidays={holidays} />}
+        {plan && <ErrorBoundary><Results plan={plan} form={planForm || form} totalPeople={(planForm || form).adults + (planForm || form).children} holidays={holidays} /></ErrorBoundary>}
       </main>
       <Footer onAbout={() => setShowAbout(true)} />
       <ScrollToTop />
@@ -873,13 +894,13 @@ function Results({ plan, form, totalPeople, holidays }) {
       <div className="hidden print:block mb-6 pb-4 border-b-2 border-gray-300">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Putni Planer</h1>
-            <p className="text-gray-500 text-sm">putni-planer.pages.dev</p>
+            <div className="text-2xl font-bold" style={{color:'#111'}}>Putni Planer</div>
+            <div className="text-sm" style={{color:'#666'}}>putni-planer.pages.dev</div>
           </div>
           <div className="text-right">
-            <div className="text-xl font-bold text-gray-900">{form.origin} → {form.destination}</div>
-            <div className="text-gray-600">{form.departDate} – {form.returnDate} · {days} {days === 1 ? 'dan' : 'dana'} · {totalPeople} {totalPeople === 1 ? 'osoba' : 'osoba'}</div>
-            <div className="text-gray-400 text-xs mt-1">Generisano: {new Date().toLocaleDateString('bs-BA')}</div>
+            <div className="text-xl font-bold" style={{color:'#111'}}>{form.origin} — {form.destination}</div>
+            <div style={{color:'#444'}}>{form.departDate} — {form.returnDate} · {days} {days === 1 ? 'dan' : 'dana'} · {totalPeople} osoba</div>
+            <div className="text-xs mt-1" style={{color:'#888'}}>Generisano: {new Date().toISOString().slice(0,10)}</div>
           </div>
         </div>
       </div>
