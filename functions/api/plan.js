@@ -274,6 +274,32 @@ async function fetchCityKnowledge(destinationGeo, env) {
 
     const prompt = `You are a travel data API. Return ONLY a valid JSON object for "${cityName}", with NO explanation, NO markdown fences, NO comments. Use this exact structure:
 {
+  "city_info": {
+    "summary": "3-4 sentence factual overview: founding, location, significance, character",
+    "population": 500000,
+    "population_year": 2023,
+    "area_km2": 1285,
+    "founded_year": 753,
+    "country": "Italy",
+    "language": "Italian",
+    "currency": "EUR",
+    "timezone": "CET (UTC+1)",
+    "religion_pct": {
+      "Christian": 80,
+      "Muslim": 5,
+      "Atheist/non-religious": 12,
+      "Other": 3
+    },
+    "crime_index": 45.2,
+    "crime_level": "Moderate",
+    "crime_note": "Pickpocketing common in tourist areas. Violent crime low.",
+    "safety_tips": ["Watch your belongings on public transport", "Avoid poorly lit areas at night"],
+    "youtube_city_tour": "https://www.youtube.com/results?search_query=rome+italy+city+guide+travel+4k",
+    "wikipedia_url": "https://en.wikipedia.org/wiki/Rome",
+    "history_url": "https://en.wikipedia.org/wiki/History_of_Rome",
+    "numbeo_url": "https://www.numbeo.com/crime/in/Rome",
+    "worldometers_url": "https://www.worldometers.info/world-population/italy-population/"
+  },
   "transit": {
     "single_eur": 2.50,
     "daily_eur": 8.00,
@@ -303,10 +329,20 @@ async function fetchCityKnowledge(destinationGeo, env) {
 }
 Rules:
 - All monetary values in EUR (convert approximately if needed)
+- city_info: accurate facts about the city
+  - population: latest available figure as integer
+  - crime_index: Numbeo crime index 0-100 (lower = safer), null if unknown
+  - crime_level: "Very Low" | "Low" | "Moderate" | "High" | "Very High"
+  - religion_pct: approximate percentages that sum to 100, use actual demographic data
+  - youtube_city_tour: search URL on YouTube for a city guide/tour video (use youtube.com/results?search_query=)
+  - wikipedia_url: correct Wikipedia article URL for the city
+  - history_url: Wikipedia History of [City] article URL
+  - numbeo_url: correct Numbeo crime URL for the city
+  - worldometers_url: Worldometers population page URL for the country
 - transit: real public transport prices, null if genuinely unknown
 - hotel_range: typical nightly prices per room - budget hostel / 3-star / 5-star
 - attractions: EXACTLY 15 entries, ordered by importance (most famous first)
-  PRIORITIZE (in order): world-famous museums, UNESCO World Heritage sites, iconic palaces or castles, major art galleries, ancient ruins or archaeological sites, famous landmarks with views, major parks or gardens, science museums, famous religious buildings (if architecturally exceptional)
+  PRIORITIZE: world-famous museums, UNESCO World Heritage sites, iconic palaces or castles, major art galleries, ancient ruins
   STRICTLY AVOID: generic war memorials, minor statues, ordinary parks, small local churches, plaques
   - name: the exact well-known name tourists search for
   - description: specific facts (founded year, architect, key artworks or exhibits, world records, size)
@@ -315,8 +351,7 @@ Rules:
   - price_note: what adults pay and what is included in that price
   - duration_hours: realistic visit time (0.5=quick photo stop, 1=brief visit, 2=standard, 3=half day, 4+=full day)
   - category: exactly one of: museum|palace|church|ancient|gallery|park|landmark|science|nature|zoo|aquarium|viewpoint|market|theatre
-  - highlight: true for the top 5 absolute must-sees, false for the other 10
-- website: real official URL of the city transport authority`
+  - highlight: true for the top 5 absolute must-sees, false for the other 10`
 
     const response = await fetchWithTimeout(GROQ_API_URL, {
       method: 'POST',
@@ -337,13 +372,13 @@ Rules:
           },
         ],
         temperature: 0.1,
-        max_tokens: 3000,
+        max_tokens: 4000,
       }),
-    }, 15000)
+    }, 20000)
 
     if (!response.ok) {
       console.error('Groq API error:', response.status, await response.text())
-      return { transit: staticTransit, hotel_range: staticHotel, attractions: [], source: 'api_error' }
+      return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, source: 'api_error' }
     }
 
     const data = await response.json()
@@ -351,7 +386,7 @@ Rules:
 
     let parsed
     try { parsed = JSON.parse(text) }
-    catch { return { transit: staticTransit, hotel_range: staticHotel, attractions: [], source: 'parse_error' } }
+    catch { return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, source: 'parse_error' } }
 
     return {
       transit: parsed.transit
@@ -359,11 +394,12 @@ Rules:
         : staticTransit,
       hotel_range: parsed.hotel_range || staticHotel,
       attractions: Array.isArray(parsed.attractions) ? parsed.attractions : [],
+      city_info: parsed.city_info || null,
       source: 'groq',
     }
   } catch (err) {
     console.error('fetchCityKnowledge error:', err?.message)
-    return { transit: staticTransit, hotel_range: staticHotel, attractions: [], source: 'error' }
+    return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, source: 'error' }
   }
 }
 
@@ -607,6 +643,7 @@ async function mainLogic(context) {
       hasFlights: Array.isArray(transportData.flights) && transportData.flights.length > 0,
       hasHotelPrice: accommodationWithRange.some((item) => typeof item?.total_price_eur === 'number' && item.total_price_eur > 0),
     }),
+    city_info: cityKnowledge.city_info || null,
     destination_coords: { lat: destinationGeo.lat, lng: destinationGeo.lng },
     accommodation: primaryAccommodation,
     accommodation_options: accommodationWithRange,

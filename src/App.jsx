@@ -511,6 +511,7 @@ function Results({ plan, form, totalPeople }) {
   return (
     <div className="mt-8 space-y-6 print-container">
       <TripSummary plan={plan} form={form} totalPeople={totalPeople} />
+      <CityInfoCard data={plan.city_info} destination={form.destination} />
       <MapCard plan={plan} />
       <TransportCard plan={plan} form={form} totalPeople={totalPeople} />
       {form.transport === 'plane' && plan.alternative_dates?.length > 0 && (
@@ -529,6 +530,157 @@ function Results({ plan, form, totalPeople }) {
       <EmergencyCard data={plan.emergency} />
       {plan.budget && <BudgetCard data={plan.budget} notes={plan.budget_notes} totalPeople={totalPeople} plan={plan} form={form} />}
       {plan.tips && <TipsCard data={plan.tips} />}
+    </div>
+  )
+}
+
+function CityInfoCard({ data, destination }) {
+  if (!data) return null
+
+  const cityName = destination ? destination.split(',')[0].trim() : ''
+
+  const crimeColor = {
+    'Very Low': 'text-emerald-400', 'Low': 'text-emerald-400',
+    'Moderate': 'text-amber-400', 'High': 'text-rose-400', 'Very High': 'text-rose-500',
+  }[data.crime_level] || 'text-white/60'
+
+  const crimeBarColor = {
+    'Very Low': 'bg-emerald-500', 'Low': 'bg-emerald-400',
+    'Moderate': 'bg-amber-400', 'High': 'bg-rose-400', 'Very High': 'bg-rose-600',
+  }[data.crime_level] || 'bg-white/20'
+
+  // Build religion chart data sorted by %
+  const religions = data.religion_pct
+    ? Object.entries(data.religion_pct).sort((a, b) => b[1] - a[1])
+    : []
+
+  const relColors = ['bg-sky-500', 'bg-violet-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-slate-500']
+
+  return (
+    <div className="card">
+      <div className="section-title">🏙️ O gradu — {cityName}</div>
+
+      {/* Summary */}
+      {data.summary && (
+        <p className="text-white/75 text-sm leading-relaxed mb-5">{data.summary}</p>
+      )}
+
+      {/* Quick stats grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        {data.population && (
+          <div className="bg-ink-900/50 rounded-xl p-3 border border-white/5">
+            <div className="text-white/40 text-[10px] uppercase tracking-wide mb-1">Stanovništvo</div>
+            <div className="text-white font-bold text-base">{data.population.toLocaleString('bs-BA')}</div>
+            {data.population_year && <div className="text-white/30 text-[10px]">({data.population_year})</div>}
+          </div>
+        )}
+        {data.area_km2 && (
+          <div className="bg-ink-900/50 rounded-xl p-3 border border-white/5">
+            <div className="text-white/40 text-[10px] uppercase tracking-wide mb-1">Površina</div>
+            <div className="text-white font-bold text-base">{data.area_km2.toLocaleString()} km²</div>
+          </div>
+        )}
+        {data.founded_year && (
+          <div className="bg-ink-900/50 rounded-xl p-3 border border-white/5">
+            <div className="text-white/40 text-[10px] uppercase tracking-wide mb-1">Osnovano</div>
+            <div className="text-white font-bold text-base">{data.founded_year < 0 ? Math.abs(data.founded_year) + ' p.n.e.' : data.founded_year}</div>
+          </div>
+        )}
+        {data.timezone && (
+          <div className="bg-ink-900/50 rounded-xl p-3 border border-white/5">
+            <div className="text-white/40 text-[10px] uppercase tracking-wide mb-1">Vremenska zona</div>
+            <div className="text-white font-bold text-sm">{data.timezone}</div>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+        {/* Religijska struktura */}
+        {religions.length > 0 && (
+          <div>
+            <div className="text-white/50 text-xs uppercase tracking-wide mb-3">Religijska struktura</div>
+            <div className="space-y-2">
+              {religions.map(([name, pct], i) => (
+                <div key={name}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-white/70">{name}</span>
+                    <span className="text-white/50">{pct}%</span>
+                  </div>
+                  <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full ${relColors[i] || 'bg-slate-500'}`} style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Stopa kriminala */}
+        <div>
+          <div className="text-white/50 text-xs uppercase tracking-wide mb-3">Stopa kriminala</div>
+          {data.crime_level && (
+            <div className="flex items-center gap-3 mb-2">
+              <span className={`font-bold text-lg ${crimeColor}`}>{data.crime_level}</span>
+              {data.crime_index !== null && data.crime_index !== undefined && (
+                <span className="text-white/40 text-xs">Index: {data.crime_index}/100</span>
+              )}
+            </div>
+          )}
+          {data.crime_index !== null && data.crime_index !== undefined && (
+            <div className="h-2 bg-white/5 rounded-full overflow-hidden mb-3">
+              <div className={`h-full rounded-full ${crimeBarColor}`} style={{ width: `${Math.min(data.crime_index, 100)}%` }} />
+            </div>
+          )}
+          {data.crime_note && <p className="text-white/60 text-xs mb-2">{data.crime_note}</p>}
+          {data.safety_tips?.length > 0 && (
+            <ul className="space-y-1">
+              {data.safety_tips.map((tip, i) => (
+                <li key={i} className="flex gap-1.5 text-xs text-white/55">
+                  <span className="text-amber-400 flex-shrink-0">⚠</span>
+                  <span>{tip}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {/* Linkovi */}
+      <div className="pt-4 border-t border-white/5">
+        <div className="text-white/40 text-xs uppercase tracking-wide mb-3">Saznaj više</div>
+        <div className="flex flex-wrap gap-2 no-print">
+          {data.youtube_city_tour && (
+            <a href={data.youtube_city_tour} target="_blank" rel="noreferrer"
+              className="flex items-center gap-2 bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-400 text-sm font-semibold rounded-lg px-4 py-2 transition-all">
+              ▶ YouTube — obilazak grada
+            </a>
+          )}
+          {data.wikipedia_url && (
+            <a href={data.wikipedia_url} target="_blank" rel="noreferrer"
+              className="flex items-center gap-2 bg-white/8 hover:bg-white/15 border border-white/10 text-white/70 text-sm font-semibold rounded-lg px-4 py-2 transition-all">
+              📖 Wikipedia — {cityName}
+            </a>
+          )}
+          {data.history_url && (
+            <a href={data.history_url} target="_blank" rel="noreferrer"
+              className="flex items-center gap-2 bg-white/8 hover:bg-white/15 border border-white/10 text-white/70 text-sm font-semibold rounded-lg px-4 py-2 transition-all">
+              📜 Historija grada
+            </a>
+          )}
+          {data.numbeo_url && (
+            <a href={data.numbeo_url} target="_blank" rel="noreferrer"
+              className="flex items-center gap-2 bg-white/8 hover:bg-white/15 border border-white/10 text-white/70 text-sm font-semibold rounded-lg px-4 py-2 transition-all">
+              🔒 Kriminal — Numbeo
+            </a>
+          )}
+          {data.worldometers_url && (
+            <a href={data.worldometers_url} target="_blank" rel="noreferrer"
+              className="flex items-center gap-2 bg-white/8 hover:bg-white/15 border border-white/10 text-white/70 text-sm font-semibold rounded-lg px-4 py-2 transition-all">
+              👥 Stanovništvo — Worldometers
+            </a>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
