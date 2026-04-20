@@ -52,7 +52,7 @@ Rules: mix 2 popular + 2 hidden gems + 2 value picks. estimated_flight_eur = rea
           { role: 'system', content: 'Travel API. Return valid JSON array only, no markdown, no explanation.' },
           { role: 'user', content: prompt },
         ],
-        temperature: 0.3,
+        temperature: 0,
         max_tokens: 1500,
       }),
     })
@@ -107,7 +107,14 @@ Rules: mix 2 popular + 2 hidden gems + 2 value picks. estimated_flight_eur = rea
       }
     })
 
-    return new Response(JSON.stringify({ suggestions: enriched }), { status: 200, headers: corsHeaders })
+    const groqLimits = {
+      remainingRequests: response.headers.get('x-ratelimit-remaining-requests'),
+      remainingTokens: response.headers.get('x-ratelimit-remaining-tokens'),
+      limitTokens: response.headers.get('x-ratelimit-limit-tokens'),
+      resetTokens: response.headers.get('x-ratelimit-reset-tokens'),
+    }
+
+    return new Response(JSON.stringify({ suggestions: enriched, groq_limits: groqLimits }), { status: 200, headers: corsHeaders })
 
   } catch (err) {
     console.error('Explore fatal:', err?.message)

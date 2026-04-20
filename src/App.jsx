@@ -179,6 +179,7 @@ export default function App() {
   const [exploreLoading, setExploreLoading] = useState(false)
   const [exploreSuggestions, setExploreSuggestions] = useState(null)
   const [exploreError, setExploreError] = useState(null)
+  const [groqLimits, setGroqLimits] = useState(null)
 
   const handleExplore = async () => {
     if (!form.origin.trim()) { setExploreError('Unesi polazak da bismo znali odakle kreces.'); return }
@@ -202,6 +203,7 @@ export default function App() {
       if (!response.ok) throw new Error(data.error || 'API greska')
       if (!data.suggestions?.length) throw new Error('Nema prijedloga')
       setExploreSuggestions(data.suggestions)
+      if (data.groq_limits) setGroqLimits(data.groq_limits)
     } catch (err) {
       setExploreError(err.message || 'Nije moguce dohvatiti prijedloge. Pokusaj ponovo.')
     } finally {
@@ -298,6 +300,7 @@ export default function App() {
       catch { throw new Error('Server je vratio nevažeći JSON: ' + rawText.slice(0, 200)) }
       setPlan(data)
       setPlanForm({ ...form })
+      if (data.groq_limits) setGroqLimits(data.groq_limits)
     } catch (err) {
       setError(parseErrorMessage(err.message || String(err)))
     } finally {
@@ -337,6 +340,7 @@ export default function App() {
               onClose={() => setExploreSuggestions(null)}
             />
           )}
+          {groqLimits && <GroqStatusBar limits={groqLimits} />}
           {loading && <LoadingState />}
           {isStale && !loading && <StaleBanner onRefresh={handleSubmit} />}
           {plan?._partial_failures?.length > 0 && !loading && <PartialWarning plan={plan} />}
@@ -728,6 +732,8 @@ function Results({ plan, form, totalPeople }) {
       </div>
       <FoodCard data={plan.food} form={form} />
       <ChainRestaurantsCard data={plan.chain_restaurants} form={form} />
+      <TouristTrapsCard data={plan.tourist_traps} />
+      <CurrencyCard data={plan.currency} destination={form.destination} />
       <VisaCard data={plan.visa} />
       <EmergencyCard data={plan.emergency} />
       {plan.budget && <BudgetCard data={plan.budget} notes={plan.budget_notes} totalPeople={totalPeople} plan={plan} form={form} />}
@@ -1984,6 +1990,111 @@ function ScrollToTop() {
     >
       ↑
     </button>
+  )
+}
+
+function GroqStatusBar({ limits }) {
+  if (!limits?.remainingTokens) return null
+  const remaining = parseInt(limits.remainingTokens) || 0
+  const total = parseInt(limits.limitTokens) || 6000
+  const pct = Math.min(100, Math.round((remaining / total) * 100))
+  const color = pct > 50 ? 'bg-emerald-500' : pct > 20 ? 'bg-amber-500' : 'bg-rose-500'
+  const textColor = pct > 50 ? 'text-emerald-400' : pct > 20 ? 'text-amber-400' : 'text-rose-400'
+  return (
+    <div className="flex items-center gap-3 px-1 py-1 no-print">
+      <div className="flex items-center gap-2 text-xs text-white/40">
+        <span>Groq API:</span>
+        <div className="w-24 h-1.5 bg-white/10 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full ${color} transition-all`} style={{ width: pct + '%' }} />
+        </div>
+        <span className={textColor}>{remaining.toLocaleString()} tokena</span>
+        {limits.resetTokens && <span className="text-white/25">reset za {limits.resetTokens}</span>}
+      </div>
+    </div>
+  )
+}
+
+function TouristTrapsCard({ data }) {
+  if (!data?.length) return null
+  const severityColor = { 'Low': 'text-amber-400 bg-amber-500/10 border-amber-500/20', 'Medium': 'text-orange-400 bg-orange-500/10 border-orange-500/20', 'High': 'text-rose-400 bg-rose-500/10 border-rose-500/20' }
+  const catEmoji = { scam: '🎭', overpriced: '💸', crowded: '👥', unsafe: '⚠️', misleading: '🔀' }
+  return (
+    <div className="card">
+      <div className="section-title">⚠️ Zamke za turiste</div>
+      <p className="text-white/55 text-sm mb-4">Uobicajene prevare i situacije na koje treba paziti u ovom gradu.</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {data.map((trap, i) => (
+          <div key={i} className={`rounded-xl p-4 border ${severityColor[trap.severity] || 'text-white/60 bg-white/5 border-white/10'}`}>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">{catEmoji[trap.category] || '⚠️'}</span>
+                <span className="font-semibold text-sm">{trap.title}</span>
+              </div>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${severityColor[trap.severity] || ''}`}>{trap.severity}</span>
+            </div>
+            <p className="text-xs leading-relaxed mb-2 opacity-80">{trap.description}</p>
+            <div className="flex gap-1.5 text-xs">
+              <span className="text-emerald-400 flex-shrink-0">✓</span>
+              <span className="opacity-75">{trap.avoid}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function CurrencyCard({ data, destination }) {
+  if (!data || data.is_eur) return null
+  const city = destination ? destination.split(',')[0].trim() : ''
+  return (
+    <div className="card">
+      <div className="section-title">💱 Valuta — {data.name} ({data.code})</div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div className="bg-ink-900/50 rounded-xl p-4 border border-white/5 text-center">
+          <div className="text-white/40 text-xs uppercase tracking-wide mb-1">1 EUR =</div>
+          <div className="text-accent-400 font-black text-2xl">~{data.approx_rate}</div>
+          <div className="text-white/60 text-sm">{data.symbol || data.code}</div>
+        </div>
+        <div className="md:col-span-2 bg-ink-900/50 rounded-xl p-4 border border-white/5">
+          <div className="text-white/40 text-xs uppercase tracking-wide mb-2">Tipicne cijene u {city}</div>
+          {data.typical_costs && (
+            <div className="space-y-1.5">
+              {Object.entries(data.typical_costs).map(([key, val]) => {
+                const labels = { coffee: '☕ Kafa', budget_meal: '🍽️ Jeftin obrok', taxi_5km: '🚕 Taksi 5km', beer: '🍺 Pivo', water: '💧 Voda', metro: '🚇 Metro karta' }
+                return (
+                  <div key={key} className="flex justify-between text-sm">
+                    <span className="text-white/60">{labels[key] || key}</span>
+                    <span className="text-white font-semibold">{val}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+      {data.rate_note && <p className="text-white/50 text-xs mb-3 italic">{data.rate_note}</p>}
+      {data.exchange_tips?.length > 0 && (
+        <div>
+          <div className="text-white/40 text-xs uppercase tracking-wide mb-2">Savjeti za zamjenu</div>
+          <ul className="space-y-1.5">
+            {data.exchange_tips.map((tip, i) => (
+              <li key={i} className="flex gap-2 text-sm text-white/70">
+                <span className="text-accent-400 flex-shrink-0">•</span>
+                <span>{tip}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="mt-4 pt-3 border-t border-white/5 no-print">
+        <a href={'https://www.xe.com/currencyconverter/convert/?Amount=1&From=EUR&To=' + data.code}
+          target="_blank" rel="noreferrer"
+          className="inline-flex items-center gap-2 bg-white/8 hover:bg-white/15 border border-white/10 text-white/70 text-sm font-semibold rounded-lg px-4 py-2 transition-colors">
+          💱 Live kurs na XE.com →
+        </a>
+      </div>
+    </div>
   )
 }
 

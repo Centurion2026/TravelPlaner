@@ -325,7 +325,26 @@ async function fetchCityKnowledge(destinationGeo, env) {
       "category": "museum",
       "highlight": true
     }
-  ]
+  ],
+  "tourist_traps": [
+    {
+      "title": "Friendly bracelet man",
+      "description": "A man ties a bracelet on your wrist uninvited then demands payment.",
+      "avoid": "Walk past without stopping, say no firmly.",
+      "severity": "Medium",
+      "category": "scam"
+    }
+  ],
+  "currency": {
+    "name": "Turkish Lira",
+    "code": "TRY",
+    "symbol": "TL",
+    "is_eur": false,
+    "approx_rate": 35.5,
+    "rate_note": "1 EUR = approx 35.5 TRY (check live rate before travel)",
+    "exchange_tips": ["Use ATMs in city center", "Avoid airport exchange booths"],
+    "typical_costs": {"coffee": "40-60 TL", "budget_meal": "150-250 TL", "taxi_5km": "200-350 TL"}
+  }
 }
 Rules:
 - All monetary values in EUR (convert approximately if needed)
@@ -351,7 +370,22 @@ Rules:
   - price_note: what adults pay and what is included in that price
   - duration_hours: realistic visit time (0.5=quick photo stop, 1=brief visit, 2=standard, 3=half day, 4+=full day)
   - category: exactly one of: museum|palace|church|ancient|gallery|park|landmark|science|nature|zoo|aquarium|viewpoint|market|theatre
-  - highlight: true for the top 5 absolute must-sees, false for the other 10`
+  - highlight: true for the top 5 absolute must-sees, false for the other 10
+- tourist_traps: exactly 6 specific, real scams or overpriced situations tourists encounter in this city
+  - title: short name of the trap (e.g. "Foto s kostimiranim likom", "Restoran blizu Colosseum-a")
+  - description: 1-2 sentences: what happens, why it is a problem
+  - avoid: one practical sentence how to avoid it
+  - severity: "Low" | "Medium" | "High"
+  - category: "scam"|"overpriced"|"crowded"|"unsafe"|"misleading"
+- currency: local currency information
+  - name: full currency name (e.g. "Turkish Lira")
+  - code: ISO code (e.g. "TRY")
+  - symbol: currency symbol (e.g. "TL")
+  - is_eur: true if the destination uses EUR as official currency
+  - approx_rate: approximate how many local units per 1 EUR (e.g. 35.5 for TRY), 1 if EUR
+  - rate_note: "1 EUR = approx X [currency] (check live rate)"
+  - exchange_tips: ["Use ATMs over exchange offices", "Avoid airport exchange rates"]
+  - typical_costs: {"coffee": "5-8 TL", "budget_meal": "50-80 TL", "taxi_5km": "80-120 TL"}`
 
     const response = await fetchWithTimeout(GROQ_API_URL, {
       method: 'POST',
@@ -378,7 +412,16 @@ Rules:
 
     if (!response.ok) {
       console.error('Groq API error:', response.status, await response.text())
-      return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, source: 'api_error' }
+      return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, tourist_traps: [], currency: null, source: 'api_error' }
+    }
+
+    // Extract Groq rate limit headers
+    const groqLimits = {
+      limitRequests: response.headers.get('x-ratelimit-limit-requests'),
+      remainingRequests: response.headers.get('x-ratelimit-remaining-requests'),
+      limitTokens: response.headers.get('x-ratelimit-limit-tokens'),
+      remainingTokens: response.headers.get('x-ratelimit-remaining-tokens'),
+      resetTokens: response.headers.get('x-ratelimit-reset-tokens'),
     }
 
     const data = await response.json()
@@ -386,7 +429,7 @@ Rules:
 
     let parsed
     try { parsed = JSON.parse(text) }
-    catch { return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, source: 'parse_error' } }
+    catch { return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, tourist_traps: [], currency: null, source: 'parse_error' } }
 
     return {
       transit: parsed.transit
@@ -395,11 +438,14 @@ Rules:
       hotel_range: parsed.hotel_range || staticHotel,
       attractions: Array.isArray(parsed.attractions) ? parsed.attractions : [],
       city_info: parsed.city_info || null,
+      tourist_traps: Array.isArray(parsed.tourist_traps) ? parsed.tourist_traps : [],
+      currency: parsed.currency || null,
+      groq_limits: groqLimits,
       source: 'groq',
     }
   } catch (err) {
     console.error('fetchCityKnowledge error:', err?.message)
-    return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, source: 'error' }
+    return { transit: staticTransit, hotel_range: staticHotel, attractions: [], city_info: null, tourist_traps: [], currency: null, source: 'error' }
   }
 }
 
@@ -644,6 +690,9 @@ async function mainLogic(context) {
       hasHotelPrice: accommodationWithRange.some((item) => typeof item?.total_price_eur === 'number' && item.total_price_eur > 0),
     }),
     city_info: cityKnowledge.city_info || null,
+    tourist_traps: cityKnowledge.tourist_traps || [],
+    currency: cityKnowledge.currency || null,
+    groq_limits: cityKnowledge.groq_limits || null,
     destination_coords: { lat: destinationGeo.lat, lng: destinationGeo.lng },
     accommodation: primaryAccommodation,
     accommodation_options: accommodationWithRange,
