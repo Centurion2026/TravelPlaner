@@ -986,12 +986,20 @@ function CityInfoCard({ data, destination }) {
             <div className="text-white font-bold text-base">{data.area_km2.toLocaleString()} km²</div>
           </div>
         )}
-        {data.founded_year && (
-          <div className="bg-ink-900/50 rounded-xl p-3 border border-white/5">
-            <div className="text-white/40 text-[10px] uppercase tracking-wide mb-1">Osnovano</div>
-            <div className="text-white font-bold text-base">{data.founded_year < 0 ? Math.abs(data.founded_year) + ' p.n.e.' : data.founded_year}</div>
-          </div>
-        )}
+        {data.founded_year && (() => {
+          // Only show if it looks like a real year (> 100 or negative for BC)
+          const yr = parseInt(data.founded_year)
+          if (!yr || (yr > 0 && yr < 100)) return null
+          const label = typeof data.founded_year === 'string' && data.founded_year.toString().length > 6
+            ? data.founded_year  // already a descriptive string like "4th century BC"
+            : yr < 0 ? Math.abs(yr) + ' p.n.e.' : yr
+          return (
+            <div className="bg-ink-900/50 rounded-xl p-3 border border-white/5">
+              <div className="text-white/40 text-[10px] uppercase tracking-wide mb-1">Osnovano</div>
+              <div className="text-white font-bold text-base">{label}</div>
+            </div>
+          )
+        })()}
         {data.timezone && (
           <div className="bg-ink-900/50 rounded-xl p-3 border border-white/5">
             <div className="text-white/40 text-[10px] uppercase tracking-wide mb-1">Vremenska zona</div>

@@ -317,6 +317,7 @@ async function fetchCityKnowledge(destinationGeo, env) {
 }
 Rules for ${cityName}:
 - city_info: real facts. crime_level: Very Low|Low|Moderate|High|Very High
+  - founded_year: integer year ONLY (e.g. 753 for Rome, -400 for cities founded BC). If unknown or uncertain, use null. Never use century numbers like 5 or 11.
 - transit: real EUR prices or null
 - hotel_range: budget hostel/3-star/5-star per night
 - attractions: exactly 12 most important museums and landmarks. highlight=true for top 5. AVOID generic memorials/plaques.`
