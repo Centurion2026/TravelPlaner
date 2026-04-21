@@ -94,13 +94,20 @@ const IATA_TO_CITY = {
   'PRN': { city: 'Pristina', country: 'Kosovo', flag: 'XK' },
 }
 
-// City name -> IATA (fuzzy)
+// Normalize diacritics: Opcina Novi Grad, Sarajevo, etc.
+function removeDiacritics(str) {
+  try { return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[dD]\u0111/g, 'd') } catch { return str }
+}
+
+// City name -> IATA (fuzzy, diacritic-safe)
 function cityToIata(cityName) {
-  const lower = cityName.toLowerCase().replace(/[^a-z\s]/g, '').trim()
+  const lower = removeDiacritics(cityName).toLowerCase().replace(/[^a-z\s]/g, '').trim()
   if (CITY_TO_IATA[lower]) return CITY_TO_IATA[lower]
-  // Try partial match
+  // Try partial match - each word
   for (const [key, code] of Object.entries(CITY_TO_IATA)) {
-    if (lower.includes(key) || key.includes(lower.substring(0, 5))) return code
+    if (lower === key) return code
+    if (lower.includes(key)) return code
+    if (key.length >= 5 && lower.includes(key.substring(0, 5))) return code
   }
   return null
 }
@@ -115,9 +122,18 @@ async function fetchTravelpayoutsFlights(originIata, departDate, returnDate, tok
       (returnDate ? '&return_date=' + returnMonth : '') +
       '&currency=eur&limit=30'
 
-    const resp = await fetch(url, {
-      headers: { 'X-Access-Token': token },
-    })
+    // Add timeout to Travelpayouts fetch
+    const controller = new AbortController()
+    const timer = setTimeout(function() { controller.abort() }, 8000)
+    let resp
+    try {
+      resp = await fetch(url, {
+        headers: { 'X-Access-Token': token },
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
 
     if (!resp.ok) {
       console.error('Travelpayouts error:', resp.status)
@@ -125,7 +141,10 @@ async function fetchTravelpayoutsFlights(originIata, departDate, returnDate, tok
     }
 
     const data = await resp.json()
-    if (!data || !data.data) return null
+    if (!data || !data.data || Object.keys(data.data).length === 0) {
+      console.log('Travelpayouts: empty data for', originIata, month)
+      return null
+    }
 
     // data.data is { "VIE": { "0": { price, transfers, ... } }, ... }
     const results = []
@@ -145,8 +164,9 @@ async function fetchTravelpayoutsFlights(originIata, departDate, returnDate, tok
       })
     }
 
+    console.log('Travelpayouts: found', results.length, 'destinations for', originIata)
     // Sort by price
-    return results.sort((a, b) => a.price_eur - b.price_eur).slice(0, 20)
+    return results.sort(function(a, b) { return a.price_eur - b.price_eur }).slice(0, 20)
   } catch (e) {
     console.error('Travelpayouts fetch error:', e && e.message)
     return null
@@ -159,7 +179,7 @@ async function groqEnrichWithPrices(flights, cityOrigin, departDate, nights, adu
     f.city + ' (' + f.country + '): ' + f.price_eur + ' EUR return' + (f.transfers > 0 ? ', ' + f.transfers + ' stop' : ', direct')
   ).join('\n')
 
-  const prompt = 'Traveler departs from "' + cityOrigin + '" on ' + departDate + ' for ' + nights + ' nights (' + adultsN + ' adults, ' + childrenN + ' children). Bosnian (BiH) passport.\n\nREAL flight prices (return economy, from live data):\n' + flightList + '\n\nSelect the 6 best destinations from the list above. Return ONLY a JSON array. Start with [.\n\nEach object: city, country, flag (2-letter ISO), tagline (short), why_now (seasonal reason), estimated_flight_eur (use the REAL price above), avg_daily_budget_eur (estimate), weather_in_month, top_3 (array 3 strings), best_for (2-3 tags: culture|history|beaches|nightlife|food|nature|architecture|shopping|family|romance|adventure|art), visa_needed (boolean for BiH passport), direct_flight (boolean), crowd_level (Low/Moderate/High/Very High), score (0-100 based on value = experience vs real price).\n\nPrioritize: good value (low price + good experience), mix of popular and hidden gems. Sort by score descending.'
+  const prompt = 'Traveler departs from "' + cityOrigin + '" on ' + departDate + ' for ' + nights + ' nights (' + adultsN + ' adults, ' + childrenN + ' children). Bosnian (BiH) passport.\n\nREAL flight prices (return economy, from live data):\n' + flightList + '\n\nSelect the 10 best destinations from the list above. Return ONLY a JSON array. Start with [.\n\nEach object: city, country, flag (2-letter ISO), tagline (short), why_now (seasonal reason), estimated_flight_eur (use the REAL price above), avg_daily_budget_eur (estimate), weather_in_month, top_3 (array 3 strings), best_for (2-3 tags: culture|history|beaches|nightlife|food|nature|architecture|shopping|family|romance|adventure|art), visa_needed (boolean for BiH passport), direct_flight (boolean), crowd_level (Low/Moderate/High/Very High), score (0-100 based on value = experience vs real price).\n\nPrioritize: good value (low price + good experience), mix: 3 popular, 3 hidden gems, 2 best value, 2 budget picks. Sort by score descending.'
 
   for (const model of GROQ_MODELS) {
     try {
@@ -173,7 +193,7 @@ async function groqEnrichWithPrices(flights, cityOrigin, departDate, nights, adu
             { role: 'user', content: prompt },
           ],
           temperature: 0.1,
-          max_tokens: 2000,
+          max_tokens: 3000,
         }),
       })
 
@@ -209,7 +229,7 @@ async function groqEnrichWithPrices(flights, cityOrigin, departDate, nights, adu
 
 // Fallback: pure Groq without real prices
 async function groqFallback(cityOrigin, departDate, nights, adultsN, childrenN, apiKey) {
-  const prompt = 'Traveler from "' + cityOrigin + '", departing ' + departDate + ', ' + nights + ' nights, ' + adultsN + ' adults, ' + childrenN + ' children, Bosnian passport. Recommend 6 European cities (different countries). Return ONLY JSON array starting with [.\n\nEach: city, country, flag (2-letter ISO), tagline, why_now, estimated_flight_eur, avg_daily_budget_eur, weather_in_month, top_3 (array), best_for (array), visa_needed (bool), direct_flight (bool), crowd_level, score (0-100). Mix popular+hidden gems+value. Sort score desc.'
+  const prompt = 'Traveler from "' + cityOrigin + '", departing ' + departDate + ', ' + nights + ' nights, ' + adultsN + ' adults, ' + childrenN + ' children, Bosnian passport. Recommend 10 European cities (different countries). Return ONLY JSON array starting with [.\n\nEach: city, country, flag (2-letter ISO), tagline, why_now, estimated_flight_eur, avg_daily_budget_eur, weather_in_month, top_3 (array), best_for (array), visa_needed (bool), direct_flight (bool), crowd_level, score (0-100). Mix popular+hidden gems+value. Sort score desc.'
 
   for (const model of GROQ_MODELS) {
     try {
@@ -223,7 +243,7 @@ async function groqFallback(cityOrigin, departDate, nights, adultsN, childrenN, 
             { role: 'user', content: prompt },
           ],
           temperature: 0.1,
-          max_tokens: 2000,
+          max_tokens: 3000,
         }),
       })
 
@@ -325,12 +345,12 @@ export async function onRequestPost(context) {
     console.log('Travelpayouts: origin IATA =', originIata)
     const flights = await fetchTravelpayoutsFlights(originIata, departDate, ret, tpToken)
 
-    if (flights && flights.length >= 4) {
+    if (flights && flights.length >= 1) {
       console.log('Travelpayouts returned', flights.length, 'destinations')
       const result = await groqEnrichWithPrices(flights, cityOrigin, departDate, nights, adultsN, childrenN, apiKey)
 
       if (result && result.list && result.list.length > 0) {
-        const enriched = result.list.slice(0, 6).map(function(s) {
+        const enriched = result.list.slice(0, 10).map(function(s) {
           return Object.assign({}, normalizeS(s), { flag: toFlag(s.flag), live_prices: true },
             buildLinks(s, cityOrigin, departDate, ret, adultsN, childrenN))
         })
@@ -354,7 +374,7 @@ export async function onRequestPost(context) {
     return new Response(JSON.stringify({ error: 'Svi AI modeli neuspjesni. Pokusaj ponovo.' }), { status: 200, headers })
   }
 
-  const enriched = result.list.slice(0, 6).map(function(s) {
+  const enriched = result.list.slice(0, 10).map(function(s) {
     return Object.assign({}, normalizeS(s), { flag: toFlag(s.flag), live_prices: false },
       buildLinks(s, cityOrigin, departDate, ret, adultsN, childrenN))
   })

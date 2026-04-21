@@ -715,7 +715,7 @@ function ExploreSuggestions({ data, form, onPick, onClose }) {
         <button onClick={onClose} className="text-white/30 hover:text-white/70 text-2xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors">×</button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5 gap-4">
         {data.map((s, i) => (
           <div key={i} className={`explore-card rounded-2xl border p-4 flex flex-col gap-3 transition-all hover:scale-[1.01] ${i === 0 ? 'explore-card-top border-violet-500/40' : 'border-black/5 dark:border-white/8'}`}>
             {/* Header */}
